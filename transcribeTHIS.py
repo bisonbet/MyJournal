@@ -9,6 +9,11 @@ import tempfile
 import re
 from datetime import datetime
 
+def debug_print(message, debug_mode=False):
+    """Print message only if debug mode is enabled."""
+    if debug_mode:
+        print(message)
+
 # Attempt to import optional dependencies and provide guidance if missing
 try:
     import soundfile as sf
@@ -90,9 +95,7 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
     then concatenates the resulting .txt files.
     """
     if args.DEBUG:
-        print("DEBUG mode enabled.")
-        # Example: print(f"DEBUG: Initial arguments: {args}")
-        # Example: print(f"DEBUG: HF Token: {'Present' if hf_token else 'Missing'}")
+        debug_print("DEBUG mode enabled.", args.DEBUG)
 
     if not os.path.isdir(directory_path):
         print(f"Error: Directory not found: {directory_path}")
@@ -107,9 +110,9 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
         print("that you have activated the correct Python environment.")
         return
 
-    print(f"Processing directory: {os.path.abspath(directory_path)}")
+    debug_print(f"Processing directory: {os.path.abspath(directory_path)}", args.DEBUG)
     if args.DEBUG:
-        print(f"DEBUG: Absolute directory path: {os.path.abspath(directory_path)}")
+        debug_print(f"DEBUG: Absolute directory path: {os.path.abspath(directory_path)}", args.DEBUG)
 
 
     # --- File discovery and sorting based on timestamp ---
@@ -122,17 +125,17 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
         return
     
     if args.DEBUG:
-        print(f"DEBUG: Found {len(initial_wav_files)} initial WAV files.")
+        debug_print(f"DEBUG: Found {len(initial_wav_files)} initial WAV files.", args.DEBUG)
         # for f_idx, f_path in enumerate(initial_wav_files):
         #     print(f"DEBUG: Initial file {f_idx+1}: {f_path}")
 
 
     files_to_process_info = []
     if args.filename_timestamp_format and args.filename_timestamp_regex:
-        print(f"Attempting to sort WAV files by timestamp using format '{args.filename_timestamp_format}' and regex '{args.filename_timestamp_regex}'...")
+        debug_print(f"Attempting to sort WAV files by timestamp using format '{args.filename_timestamp_format}' and regex '{args.filename_timestamp_regex}'...", args.DEBUG)
         if args.DEBUG:
-            print(f"DEBUG: Timestamp format: {args.filename_timestamp_format}")
-            print(f"DEBUG: Timestamp regex: {args.filename_timestamp_regex}")
+            debug_print(f"DEBUG: Timestamp format: {args.filename_timestamp_format}", args.DEBUG)
+            debug_print(f"DEBUG: Timestamp regex: {args.filename_timestamp_regex}", args.DEBUG)
             
         sortable_files = []
         unsortable_files = []
@@ -143,35 +146,35 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                 match = re.search(args.filename_timestamp_regex, filename)
                 if match and match.group(1):
                     timestamp_str = match.group(1)
-                    if args.DEBUG: print(f"DEBUG: File '{filename}', extracted timestamp_str: '{timestamp_str}'")
+                    if args.DEBUG: debug_print(f"DEBUG: File '{filename}', extracted timestamp_str: '{timestamp_str}'", args.DEBUG)
                     dt_obj = datetime.strptime(timestamp_str, args.filename_timestamp_format)
                     sortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
                 else:
-                    print(f"Warning: Timestamp pattern not found or regex group 1 empty in '{filename}'. Will process later.")
-                    if args.DEBUG: print(f"DEBUG: No match or empty group 1 for '{filename}' with regex '{args.filename_timestamp_regex}'")
+                    debug_print(f"Warning: Timestamp pattern not found or regex group 1 empty in '{filename}'. Will process later.", args.DEBUG)
+                    if args.DEBUG: debug_print(f"DEBUG: No match or empty group 1 for '{filename}' with regex '{args.filename_timestamp_regex}'", args.DEBUG)
                     unsortable_files.append({'path': wav_path, 'original_filename': filename})
             except ValueError as ve:
-                print(f"Warning: Could not parse timestamp from '{filename}' (extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}', attempted format: '{args.filename_timestamp_format}'). Error: {ve}. Will process later.")
-                if args.DEBUG: print(f"DEBUG: ValueError for '{filename}'. Extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}'. Format: '{args.filename_timestamp_format}'. Error: {ve}")
+                debug_print(f"Warning: Could not parse timestamp from '{filename}' (extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}', attempted format: '{args.filename_timestamp_format}'). Error: {ve}. Will process later.", args.DEBUG)
+                if args.DEBUG: debug_print(f"DEBUG: ValueError for '{filename}'. Extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}'. Format: '{args.filename_timestamp_format}'. Error: {ve}", args.DEBUG)
                 unsortable_files.append({'path': wav_path, 'original_filename': filename})
             except Exception as e_parse:
-                print(f"Warning: Error parsing timestamp for '{filename}': {e_parse}. Will process later.")
-                if args.DEBUG: print(f"DEBUG: Generic parsing error for '{filename}': {e_parse}")
+                debug_print(f"Warning: Error parsing timestamp for '{filename}': {e_parse}. Will process later.", args.DEBUG)
+                if args.DEBUG: debug_print(f"DEBUG: Generic parsing error for '{filename}': {e_parse}", args.DEBUG)
                 unsortable_files.append({'path': wav_path, 'original_filename': filename})
         
         sortable_files.sort(key=lambda x: x['datetime'])
         files_to_process_info = sortable_files + unsortable_files 
         if args.DEBUG:
-            print(f"DEBUG: {len(sortable_files)} sortable files, {len(unsortable_files)} unsortable files.")
+            debug_print(f"DEBUG: {len(sortable_files)} sortable files, {len(unsortable_files)} unsortable files.", args.DEBUG)
     else:
-        print("INFO: Timestamp sorting not enabled (format or regex not provided). Processing files in default glob order.")
+        debug_print("INFO: Timestamp sorting not enabled (format or regex not provided). Processing files in default glob order.", args.DEBUG)
         for wav_path in initial_wav_files:
              files_to_process_info.append({'path': wav_path, 'original_filename': os.path.basename(wav_path)})
     
-    print("\nOrder of processing WAV files:")
+    debug_print("\nOrder of processing WAV files:", args.DEBUG)
     for i, file_info in enumerate(files_to_process_info):
-        print(f"{i+1}. {file_info['original_filename']}")
-    print("-" * 30)
+        debug_print(f"{i+1}. {file_info['original_filename']}", args.DEBUG)
+    debug_print("-" * 30, args.DEBUG)
 
     generated_txt_files = []
 
@@ -182,35 +185,35 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
         
         current_audio_path = wav_file_path
         
-        print(f"\n--- Processing: {original_wav_filename} ---")
-        if args.DEBUG: print(f"DEBUG: Starting processing for {original_wav_filename}, original path: {wav_file_path}")
+        debug_print(f"\n--- Processing: {original_wav_filename} ---", args.DEBUG)
+        if args.DEBUG: debug_print(f"DEBUG: Starting processing for {original_wav_filename}, original path: {wav_file_path}", args.DEBUG)
 
 
         with tempfile.TemporaryDirectory(prefix=f"{original_base_name_no_ext}_processed_", dir=directory_path) as temp_proc_dir:
-            if args.DEBUG: print(f"DEBUG: Created temporary processing directory: {temp_proc_dir}")
+            if args.DEBUG: debug_print(f"DEBUG: Created temporary processing directory: {temp_proc_dir}", args.DEBUG)
             if args.enable_noise_reduction:
                 if not noisereduce or not sf:
-                    print(f"INFO: Skipping noise reduction for {original_wav_filename} due to missing libraries.")
+                    debug_print(f"INFO: Skipping noise reduction for {original_wav_filename} due to missing libraries.", args.DEBUG)
                 else:
                     temp_nr_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_nr.wav")
-                    if args.DEBUG: print(f"DEBUG: Attempting noise reduction. Input: {current_audio_path}, Output: {temp_nr_path}")
+                    if args.DEBUG: debug_print(f"DEBUG: Attempting noise reduction. Input: {current_audio_path}, Output: {temp_nr_path}", args.DEBUG)
                     if apply_noise_reduction(current_audio_path, temp_nr_path):
                         current_audio_path = temp_nr_path
             else:
-                print(f"INFO: Noise reduction disabled by user for {original_wav_filename}.")
+                debug_print(f"INFO: Noise reduction disabled by user for {original_wav_filename}.", args.DEBUG)
 
             if args.enable_normalization:
                 if not AudioSegment:
-                     print(f"INFO: Skipping normalization for {original_wav_filename} due to missing pydub or ffmpeg/libav.")
+                     debug_print(f"INFO: Skipping normalization for {original_wav_filename} due to missing pydub or ffmpeg/libav.", args.DEBUG)
                 else:
                     temp_norm_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_norm.wav")
-                    if args.DEBUG: print(f"DEBUG: Attempting normalization. Input: {current_audio_path}, Output: {temp_norm_path}, Target dBFS: {args.normalization_target_dbfs}")
+                    if args.DEBUG: debug_print(f"DEBUG: Attempting normalization. Input: {current_audio_path}, Output: {temp_norm_path}, Target dBFS: {args.normalization_target_dbfs}", args.DEBUG)
                     if apply_normalization(current_audio_path, temp_norm_path, args.normalization_target_dbfs):
                         current_audio_path = temp_norm_path
             else:
-                print(f"INFO: Normalization disabled by user for {original_wav_filename}.")
+                debug_print(f"INFO: Normalization disabled by user for {original_wav_filename}.", args.DEBUG)
             
-            print(f"Running WhisperX on: {os.path.basename(current_audio_path)} (derived from {original_wav_filename})...")
+            debug_print(f"Running WhisperX on: {os.path.basename(current_audio_path)} (derived from {original_wav_filename})...", args.DEBUG)
             command = [
                 "whisperx", current_audio_path,
                 "--model", "large-v3", "--diarize", "--language", "en",
@@ -221,7 +224,7 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
             if args.compute_type:
                 command.extend(["--compute_type", args.compute_type])
             
-            if args.DEBUG: print(f"DEBUG: WhisperX command: {' '.join(command)}")
+            if args.DEBUG: debug_print(f"DEBUG: WhisperX command: {' '.join(command)}", args.DEBUG)
 
 
             try:
@@ -230,63 +233,63 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                 result = subprocess.run(command, capture_output=True, text=True, env=process_env, check=False)
 
                 if args.DEBUG:
-                    print(f"DEBUG: WhisperX process completed. Return code: {result.returncode}")
-                    if result.stdout: print(f"DEBUG: WhisperX Stdout:\n{result.stdout}")
-                    if result.stderr: print(f"DEBUG: WhisperX Stderr:\n{result.stderr}")
+                    debug_print(f"DEBUG: WhisperX process completed. Return code: {result.returncode}", args.DEBUG)
+                    if result.stdout: debug_print(f"DEBUG: WhisperX Stdout:\n{result.stdout}", args.DEBUG)
+                    if result.stderr: debug_print(f"DEBUG: WhisperX Stderr:\n{result.stderr}", args.DEBUG)
 
 
                 if result.returncode == 0:
-                    print(f"WhisperX completed for {original_wav_filename}.")
+                    debug_print(f"WhisperX completed for {original_wav_filename}.", args.DEBUG)
                     
                     whisperx_input_basename_for_txt = os.path.splitext(os.path.basename(current_audio_path))[0]
                     actual_txt_generated_by_whisperx = os.path.join(directory_path, f"{whisperx_input_basename_for_txt}.txt")
                     target_final_txt_path = os.path.join(directory_path, f"{original_base_name_no_ext}.txt")
                     if args.DEBUG:
-                        print(f"DEBUG: WhisperX input basename for TXT: {whisperx_input_basename_for_txt}")
-                        print(f"DEBUG: Actual TXT generated by WhisperX (expected): {actual_txt_generated_by_whisperx}")
-                        print(f"DEBUG: Target final TXT path: {target_final_txt_path}")
+                        debug_print(f"DEBUG: WhisperX input basename for TXT: {whisperx_input_basename_for_txt}", args.DEBUG)
+                        debug_print(f"DEBUG: Actual TXT generated by WhisperX (expected): {actual_txt_generated_by_whisperx}", args.DEBUG)
+                        debug_print(f"DEBUG: Target final TXT path: {target_final_txt_path}", args.DEBUG)
 
 
                     if os.path.exists(actual_txt_generated_by_whisperx):
                         if actual_txt_generated_by_whisperx != target_final_txt_path:
                             try:
                                 if os.path.exists(target_final_txt_path):
-                                    print(f"Warning: Target file {os.path.basename(target_final_txt_path)} already exists. Overwriting.")
-                                    if args.DEBUG: print(f"DEBUG: Overwriting existing target file: {target_final_txt_path}")
+                                    debug_print(f"Warning: Target file {os.path.basename(target_final_txt_path)} already exists. Overwriting.", args.DEBUG)
+                                    if args.DEBUG: debug_print(f"DEBUG: Overwriting existing target file: {target_final_txt_path}", args.DEBUG)
                                     os.remove(target_final_txt_path)
                                 shutil.move(actual_txt_generated_by_whisperx, target_final_txt_path)
-                                print(f"Renamed WhisperX output {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}")
-                                if args.DEBUG: print(f"DEBUG: Successfully renamed {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}")
+                                debug_print(f"Renamed WhisperX output {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}", args.DEBUG)
+                                if args.DEBUG: debug_print(f"DEBUG: Successfully renamed {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}", args.DEBUG)
                             except Exception as e_rename:
-                                print(f"Error renaming {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}: {e_rename}. Using original WhisperX output name.")
-                                if args.DEBUG: print(f"DEBUG: Renaming failed. Error: {e_rename}")
+                                debug_print(f"Error renaming {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}: {e_rename}. Using original WhisperX output name.", args.DEBUG)
+                                if args.DEBUG: debug_print(f"DEBUG: Renaming failed. Error: {e_rename}", args.DEBUG)
                                 target_final_txt_path = actual_txt_generated_by_whisperx 
                         
                         generated_txt_files.append(target_final_txt_path)
-                        print(f"Successfully processed and prepared transcription: {os.path.basename(target_final_txt_path)}")
+                        debug_print(f"Successfully processed and prepared transcription: {os.path.basename(target_final_txt_path)}", args.DEBUG)
                     else:
-                        print(f"Warning: WhisperX reported success, but expected output file {os.path.basename(actual_txt_generated_by_whisperx)} not found.")
+                        debug_print(f"Warning: WhisperX reported success, but expected output file {os.path.basename(actual_txt_generated_by_whisperx)} not found.", args.DEBUG)
                 else:
-                    print(f"Error processing {original_wav_filename} with WhisperX:")
+                    debug_print(f"Error processing {original_wav_filename} with WhisperX:", args.DEBUG)
                     if not args.DEBUG: # If not in debug, print stdout/stderr here for errors
-                        if result.stdout: print(f"WhisperX Stdout:\n{result.stdout}")
-                        if result.stderr: print(f"WhisperX Stderr:\n{result.stderr}")
+                        if result.stdout: debug_print(f"WhisperX Stdout:\n{result.stdout}", args.DEBUG)
+                        if result.stderr: debug_print(f"WhisperX Stderr:\n{result.stderr}", args.DEBUG)
             except Exception as e:
-                print(f"An unexpected error occurred while running WhisperX for {original_wav_filename}: {e}")
-                if args.DEBUG: print(f"DEBUG: Exception during WhisperX subprocess run: {e}")
+                debug_print(f"An unexpected error occurred while running WhisperX for {original_wav_filename}: {e}", args.DEBUG)
+                if args.DEBUG: debug_print(f"DEBUG: Exception during WhisperX subprocess run: {e}", args.DEBUG)
             
-            if args.DEBUG: print(f"DEBUG: Exiting temporary directory context for {original_wav_filename}. Temp dir {temp_proc_dir} will be cleaned up.")
+            if args.DEBUG: debug_print(f"DEBUG: Exiting temporary directory context for {original_wav_filename}. Temp dir {temp_proc_dir} will be cleaned up.", args.DEBUG)
 
     if not generated_txt_files:
-        print("\nNo .txt files were generated by WhisperX. Skipping concatenation.")
+        debug_print("\nNo .txt files were generated by WhisperX. Skipping concatenation.", args.DEBUG)
         return
 
     abs_directory_path = os.path.abspath(directory_path)
     directory_basename = os.path.basename(abs_directory_path)
     concatenated_file_name = os.path.join(abs_directory_path, f"{directory_basename}_transcription_summary.txt")
 
-    print(f"\nConcatenating {len(generated_txt_files)} .txt files into: {concatenated_file_name}")
-    if args.DEBUG: print(f"DEBUG: Concatenating files: {generated_txt_files}")
+    debug_print(f"\nConcatenating {len(generated_txt_files)} .txt files into: {concatenated_file_name}", args.DEBUG)
+    if args.DEBUG: debug_print(f"DEBUG: Concatenating files: {generated_txt_files}", args.DEBUG)
     
     with open(concatenated_file_name, "w", encoding="utf-8") as outfile:
         for txt_file_path in generated_txt_files: 
@@ -296,12 +299,12 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                     outfile.write(f"--- Content from: {base_txt_filename} ---\n\n")
                     outfile.write(infile.read())
                     outfile.write("\n\n" + "="*80 + "\n\n")
-                print(f"Added content from {base_txt_filename}")
+                debug_print(f"Added content from {base_txt_filename}", args.DEBUG)
             except Exception as e:
-                print(f"Error reading or writing {txt_file_path}: {e}")
+                debug_print(f"Error reading or writing {txt_file_path}: {e}", args.DEBUG)
     
-    print("\nScript finished.")
-    print(f"All relevant .txt files concatenated into {concatenated_file_name}")
+    debug_print("\nScript finished.", args.DEBUG)
+    debug_print(f"All relevant .txt files concatenated into {concatenated_file_name}", args.DEBUG)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -337,10 +340,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.DEBUG:
-        print("--- Parsed Arguments ---")
+        debug_print("--- Parsed Arguments ---", args.DEBUG)
         for arg, value in vars(args).items():
-            print(f"{arg}: {value}")
-        print("------------------------")
+            debug_print(f"{arg}: {value}", args.DEBUG)
+        debug_print("------------------------", args.DEBUG)
 
 
     if not args.hf_token:

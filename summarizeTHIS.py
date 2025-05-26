@@ -4,6 +4,7 @@ import argparse
 import os
 import json
 import tiktoken # For token counting for chunking
+import re
 
 # --- Configuration ---
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -47,25 +48,28 @@ def get_tokenizer_for_counting():
             print(f"Could not load fallback tiktoken encoding 'cl100k_base'. Error: {e_fallback}")
             raise
 
-def check_ollama_status(ollama_url):
+def check_ollama_status(ollama_url, debug_mode=False):
     """Checks if the Ollama server is responsive."""
-    print(f"Checking Ollama status at {ollama_url}...")
+    if debug_mode:
+        print(f"Checking Ollama status at {ollama_url}...")
     try:
         response = requests.get(ollama_url, timeout=10)
         response.raise_for_status()
-        print("Ollama server is responsive.")
+        if debug_mode:
+            print("Ollama server is responsive.")
         return True
     except requests.exceptions.RequestException as e:
         print(f"Error connecting to Ollama: {e}")
         print(f"Please ensure Ollama is running and accessible at '{ollama_url}'.")
         return False
 
-def split_text_into_chunks(text, tokenizer, max_content_tokens_for_chunk, overlap_tokens):
+def split_text_into_chunks(text, tokenizer, max_content_tokens_for_chunk, overlap_tokens, debug_mode=False):
     """
     Splits text into chunks.
     'max_content_tokens_for_chunk' is the target token count for the actual text content of the chunk.
     """
-    print(f"Splitting text into chunks of target content ~{max_content_tokens_for_chunk} tokens with {overlap_tokens} token overlap...")
+    if debug_mode:
+        print(f"Splitting text into chunks of target content ~{max_content_tokens_for_chunk} tokens with {overlap_tokens} token overlap...")
     tokens = tokenizer.encode(text)
     if not tokens:
         return []
@@ -81,17 +85,19 @@ def split_text_into_chunks(text, tokenizer, max_content_tokens_for_chunk, overla
             break
         advance_by = max_content_tokens_for_chunk - overlap_tokens
         if advance_by <= 0 : 
-            print(f"Warning: Chunk advance step is {advance_by}. Check overlap_tokens and chunk size. Advancing by 1 to prevent stall.")
+            if debug_mode:
+                print(f"Warning: Chunk advance step is {advance_by}. Check overlap_tokens and chunk size. Advancing by 1 to prevent stall.")
             advance_by = 1
         start_idx += advance_by
         if start_idx >= len(tokens): 
             break
-    print(f"Split into {len(chunks)} chunks.")
+    if debug_mode:
+        print(f"Split into {len(chunks)} chunks.")
     return chunks
 
 def generate_summary_ollama(text_chunk, ollama_url, ollama_model,
                             num_ctx_for_call, max_new_tokens_for_generation, prompt_template,
-                            temperature=0.7, top_p=0.9):
+                            temperature=0.7, top_p=0.9, debug_mode=False):
     """Generates a summary for a text chunk using a specified Ollama model."""
     prompt = prompt_template.format(text_chunk=text_chunk)
     api_url = f"{ollama_url.rstrip('/')}/api/generate"
@@ -111,10 +117,12 @@ def generate_summary_ollama(text_chunk, ollama_url, ollama_model,
     try:
         counting_tokenizer = get_tokenizer_for_counting() 
         estimated_prompt_tokens = len(counting_tokenizer.encode(prompt))
-        print(f"Ollama Call (Model: {ollama_model}): Num Ctx: {num_ctx_for_call}, Est. Prompt Tokens: ~{estimated_prompt_tokens}, Target Gen. Tokens: {max_new_tokens_for_generation}.")
+        if debug_mode:
+            print(f"Ollama Call (Model: {ollama_model}): Num Ctx: {num_ctx_for_call}, Est. Prompt Tokens: ~{estimated_prompt_tokens}, Target Gen. Tokens: {max_new_tokens_for_generation}.")
     except Exception as e_tok:
-        print(f"Note: Could not estimate prompt tokens due to tokenizer issue: {e_tok}")
-        print(f"Ollama Call (Model: {ollama_model}): Num Ctx: {num_ctx_for_call}, Target Gen. Tokens: {max_new_tokens_for_generation}.")
+        if debug_mode:
+            print(f"Note: Could not estimate prompt tokens due to tokenizer issue: {e_tok}")
+            print(f"Ollama Call (Model: {ollama_model}): Num Ctx: {num_ctx_for_call}, Target Gen. Tokens: {max_new_tokens_for_generation}.")
 
     try:
         response = requests.post(api_url, json=payload, timeout=600) 
@@ -123,32 +131,37 @@ def generate_summary_ollama(text_chunk, ollama_url, ollama_model,
         summary = response_json.get("response", "").strip()
 
         if not summary:
-            print("Warning: Ollama returned an empty summary.")
-            context_tokens_evaluated = response_json.get('eval_count', 'N/A')
-            total_duration_ns = response_json.get('total_duration', 'N/A')
-            total_duration_s = 'N/A'
-            if isinstance(total_duration_ns, (int, float)) and total_duration_ns > 0:
-                total_duration_s = f"{total_duration_ns / 1e9:.2f}s"
-            print(f"Ollama response details: eval_count={context_tokens_evaluated}, total_duration={total_duration_s}")
-            return f"[Ollama returned empty summary. Context tokens evaluated: {context_tokens_evaluated}]"
+            if debug_mode:
+                print("Warning: Ollama returned an empty summary.")
+                context_tokens_evaluated = response_json.get('eval_count', 'N/A')
+                total_duration_ns = response_json.get('total_duration', 'N/A')
+                total_duration_s = 'N/A'
+                if isinstance(total_duration_ns, (int, float)) and total_duration_ns > 0:
+                    total_duration_s = f"{total_duration_ns / 1e9:.2f}s"
+                print(f"Ollama response details: eval_count={context_tokens_evaluated}, total_duration={total_duration_s}")
+            return f"[Ollama returned empty summary. Context tokens evaluated: {response_json.get('eval_count', 'N/A')}]"
 
-        print("Summary generated by Ollama.")
+        if debug_mode:
+            print("Summary generated by Ollama.")
         return summary
     except requests.exceptions.HTTPError as http_err:
         error_content = http_err.response.text
-        print(f"HTTP error occurred with Ollama: {http_err} - {error_content}")
+        if debug_mode:
+            print(f"HTTP error occurred with Ollama: {http_err} - {error_content}")
         try:
             error_details = http_err.response.json()
             return f"[Ollama HTTP Error: {http_err}. Details: {error_details.get('error', 'N/A')}]"
         except json.JSONDecodeError:
             return f"[Ollama HTTP Error: {http_err}. Response: {error_content}]"
     except requests.exceptions.RequestException as e:
-        print(f"Error making request to Ollama: {e}")
+        if debug_mode:
+            print(f"Error making request to Ollama: {e}")
         return f"[Error connecting to Ollama: {e}]"
     except json.JSONDecodeError as e:
-        print(f"Error decoding Ollama's JSON response: {e}")
-        response_text_for_error = response.text if 'response' in locals() and response else "No response object or text available"
-        print(f"Response text: {response_text_for_error}")
+        if debug_mode:
+            print(f"Error decoding Ollama's JSON response: {e}")
+            response_text_for_error = response.text if 'response' in locals() and response else "No response object or text available"
+            print(f"Response text: {response_text_for_error}")
         return f"[Error decoding Ollama response: {e}]"
 
 def save_debug_file(original_input_filepath, model_name, step_label, content_to_save):
@@ -175,6 +188,9 @@ def save_debug_file(original_input_filepath, model_name, step_label, content_to_
     except Exception as e:
         print(f"Error saving debug file '{debug_filepath}': {e}")
 
+def remove_thinking_tokens(text):
+    """Remove any text between <think> and </think> tags."""
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
 
 def summarize_transcript(full_text, tokenizer_for_counting, ollama_url, ollama_model,
                          # Pass-specific configurations
@@ -261,38 +277,46 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
     full_text_tokens = len(tokenizer_for_counting.encode(full_text))
 
     if full_text_tokens <= max_text_for_direct_final_summary:
-        print(f"Original text ({full_text_tokens} tokens) is short enough for a single final pass. Max input: {max_text_for_direct_final_summary}.")
+        if debug_mode:
+            print(f"Original text ({full_text_tokens} tokens) is short enough for a single final pass. Max input: {max_text_for_direct_final_summary}.")
         return generate_summary_ollama(full_text, ollama_url, ollama_model,
                                        final_pass_ctx, final_pass_max_gen,
-                                       prompt_template_initial_chunk)
+                                       prompt_template_initial_chunk,
+                                       debug_mode=debug_mode)
 
-    print(f"\n--- Stage 1: Initial Chunk Summarization (Ctx: {initial_pass_ctx}, MaxGen: {initial_pass_max_gen}) ---")
+    if debug_mode:
+        print(f"\n--- Stage 1: Initial Chunk Summarization (Ctx: {initial_pass_ctx}, MaxGen: {initial_pass_max_gen}) ---")
     max_content_tokens_for_initial_chunk = int(initial_pass_ctx * target_chunk_tokens_ratio)
     safe_max_content_for_initial_chunk = get_max_text_tokens_for_prompt_input(initial_pass_ctx, initial_pass_max_gen)
     
     if max_content_tokens_for_initial_chunk > safe_max_content_for_initial_chunk:
-        print(f"Warning (Stage 1): Calculated chunk content tokens ({max_content_tokens_for_initial_chunk}) > safe max ({safe_max_content_for_initial_chunk}). Adjusting.")
+        if debug_mode:
+            print(f"Warning (Stage 1): Calculated chunk content tokens ({max_content_tokens_for_initial_chunk}) > safe max ({safe_max_content_for_initial_chunk}). Adjusting.")
         max_content_tokens_for_initial_chunk = safe_max_content_for_initial_chunk
     
     if max_content_tokens_for_initial_chunk <= 0:
         return f"[Config Error (Stage 1): initial_pass_ctx ({initial_pass_ctx}) too small for initial_pass_max_gen ({initial_pass_max_gen}) and buffer. Cannot proceed.]"
 
     initial_chunks = split_text_into_chunks(full_text, tokenizer_for_counting,
-                                            max_content_tokens_for_initial_chunk, overlap_tokens)
+                                            max_content_tokens_for_initial_chunk, overlap_tokens,
+                                            debug_mode=debug_mode)
     if not initial_chunks: return "[Error (Stage 1): No initial chunks created]"
 
     initial_summaries = []
     for i, chunk_text in enumerate(initial_chunks):
-        print(f"Summarizing initial chunk {i+1}/{len(initial_chunks)}...")
+        if debug_mode:
+            print(f"Summarizing initial chunk {i+1}/{len(initial_chunks)}...")
         summary = generate_summary_ollama(chunk_text, ollama_url, ollama_model,
                                           initial_pass_ctx, initial_pass_max_gen,
-                                          prompt_template_initial_chunk)
+                                          prompt_template_initial_chunk,
+                                          debug_mode=debug_mode)
         if debug_mode:
             save_debug_file(original_input_filepath, ollama_model, f"S1-Chunk{i+1}", summary) 
         if not (summary.startswith("[Error") or summary.startswith("[Ollama")):
             initial_summaries.append(summary)
         else:
-            print(f"Warning (Stage 1): Failed to summarize initial chunk {i+1}. Error: {summary}")
+            if debug_mode:
+                print(f"Warning (Stage 1): Failed to summarize initial chunk {i+1}. Error: {summary}")
             initial_summaries.append(f"[Summary error for initial chunk {i+1}: {summary}]") 
 
     valid_initial_summaries = [s for s in initial_summaries if not (s.startswith("[Error") or s.startswith("[Ollama") or ("[Summary error for initial chunk" in s and "Ollama returned empty summary" not in s) )] 
@@ -302,6 +326,7 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
     
     texts_for_next_stage = valid_initial_summaries
     combined_initial_summaries_text = "\n\n---\n\n".join(texts_for_next_stage)
+    combined_initial_summaries_text = remove_thinking_tokens(combined_initial_summaries_text)
     if debug_mode:
         save_debug_file(original_input_filepath, ollama_model, "S1-CombinedAllChunks", combined_initial_summaries_text) 
 
@@ -323,6 +348,7 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
 
         while intermediate_loop_count <= max_intermediate_loops:
             combined_text_for_this_intermediate_iter = "\n\n---\n\n".join(current_texts_for_intermediate_processing)
+            combined_text_for_this_intermediate_iter = remove_thinking_tokens(combined_text_for_this_intermediate_iter)
             tokens_for_this_intermediate_iter = len(tokenizer_for_counting.encode(combined_text_for_this_intermediate_iter))
             print(f"Intermediate Loop {intermediate_loop_count}: Processing {tokens_for_this_intermediate_iter} tokens.")
 
@@ -346,7 +372,8 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
             intermediate_chunks_to_summarize = split_text_into_chunks(combined_text_for_this_intermediate_iter,
                                                                     tokenizer_for_counting,
                                                                     max_content_tokens_for_intermediate_chunk,
-                                                                    overlap_tokens)
+                                                                    overlap_tokens,
+                                                                    debug_mode=debug_mode)
             if not intermediate_chunks_to_summarize:
                 print(f"Error (Stage 2 Loop {intermediate_loop_count}): No chunks created. Using previous texts.")
                 texts_for_next_stage = current_texts_for_intermediate_processing 
@@ -357,7 +384,8 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
                 print(f"Summarizing intermediate chunk {i+1}/{len(intermediate_chunks_to_summarize)} (Loop {intermediate_loop_count})...")
                 summary = generate_summary_ollama(text_to_summarize, ollama_url, ollama_model,
                                                   intermediate_pass_ctx, intermediate_pass_max_gen,
-                                                  prompt_template_combine_summaries) 
+                                                  prompt_template_combine_summaries,
+                                                  debug_mode=debug_mode) 
                 if debug_mode:
                     save_debug_file(original_input_filepath, ollama_model, f"S2L{intermediate_loop_count}-Chunk{i+1}", summary) 
                 if not (summary.startswith("[Error") or summary.startswith("[Ollama")):
@@ -375,6 +403,7 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
             
             current_texts_for_intermediate_processing = valid_summaries_this_iter
             combined_output_this_intermediate_loop = "\n\n---\n\n".join(current_texts_for_intermediate_processing)
+            combined_output_this_intermediate_loop = remove_thinking_tokens(combined_output_this_intermediate_loop)
             if debug_mode:
                 save_debug_file(original_input_filepath, ollama_model, f"S2L{intermediate_loop_count}-CombinedAllChunks", combined_output_this_intermediate_loop) 
 
@@ -388,6 +417,7 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
 
     print(f"\n--- Stage 3: Final Combination Summarization (Ctx: {final_pass_ctx}, MaxGen: {final_pass_max_gen}) ---")
     combined_text_for_final_summary = "\n\n---\n\n".join(texts_for_next_stage)
+    combined_text_for_final_summary = remove_thinking_tokens(combined_text_for_final_summary)
     final_input_tokens = len(tokenizer_for_counting.encode(combined_text_for_final_summary))
     print(f"Generating final summary from {len(texts_for_next_stage)} text(s), totaling {final_input_tokens} tokens.")
 
@@ -396,14 +426,15 @@ Comprehensive Daily Summary (Markdown, including a dedicated section for Reminde
 
     final_summary = generate_summary_ollama(combined_text_for_final_summary, ollama_url, ollama_model,
                                             final_pass_ctx, final_pass_max_gen,
-                                            prompt_template_combine_summaries) 
+                                            prompt_template_combine_summaries,
+                                            debug_mode=debug_mode) 
     return final_summary
 
 def main():
     parser = argparse.ArgumentParser(description="Summarize a long text file using multiple Ollama models with a multi-stage MapReduce approach.")
     parser.add_argument("file_path", help="Path to the long text file.")
     parser.add_argument("--ollama_url", default=DEFAULT_OLLAMA_URL, help=f"URL of the Ollama server (default: {DEFAULT_OLLAMA_URL}).")
-    parser.add_argument("--ollama_model", default=DEFAULT_OLLAMA_MODEL, help=f"Default Ollama model if not using the list (default: {DEFAULT_OLLAMA_MODEL}). The script primarily uses MODELS_TO_RUN_LIST.")
+    parser.add_argument("--ollama_model", help=f"Optional: Specify a single model to use. If not provided, will run all models in MODELS_TO_RUN_LIST: {', '.join(MODELS_TO_RUN_LIST)}")
     
     parser.add_argument("--initial_pass_ollama_num_ctx", type=int, default=DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX, help=f"Context window for initial chunk summarization (default: {DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX}).")
     parser.add_argument("--initial_pass_max_new_tokens", type=int, default=DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS, help=f"Max new tokens for initial chunk summaries (default: {DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS}).")
@@ -421,7 +452,7 @@ def main():
 
     args = parser.parse_args()
 
-    if not check_ollama_status(args.ollama_url):
+    if not check_ollama_status(args.ollama_url, args.DEBUG):
         return
 
     try:
@@ -444,17 +475,19 @@ def main():
         print("Error: Input file is empty.")
         return
 
-    for model_name_for_iteration in MODELS_TO_RUN_LIST:
-        print(f"\n\n{'='*20} PROCESSING WITH MODEL: {model_name_for_iteration} {'='*20}")
-        print(f"Input file: {args.file_path}")
-        print(f"Ollama URL: {args.ollama_url}, Model: {model_name_for_iteration}")
-        print(f"Config: Initial Pass (Ctx: {args.initial_pass_ollama_num_ctx}, MaxGen: {args.initial_pass_max_new_tokens})")
-        print(f"        Intermediate Pass (Ctx: {args.intermediate_pass_ollama_num_ctx}, MaxGen: {args.intermediate_pass_max_new_tokens})")
-        print(f"        Final Pass (Ctx: {args.final_pass_ollama_num_ctx}, MaxGen: {args.final_pass_max_new_tokens})")
-        print(f"        Chunk Ratio: {args.target_chunk_ratio}, Overlap: {args.overlap_tokens}")
-        if args.DEBUG:
-            print("        DEBUG mode enabled: Intermediate files will be saved.")
+    # Determine which models to run
+    models_to_run = [args.ollama_model] if args.ollama_model else MODELS_TO_RUN_LIST
 
+    for model_name_for_iteration in models_to_run:
+        if args.DEBUG:
+            print(f"\n\n{'='*20} PROCESSING WITH MODEL: {model_name_for_iteration} {'='*20}")
+            print(f"Input file: {args.file_path}")
+            print(f"Ollama URL: {args.ollama_url}, Model: {model_name_for_iteration}")
+            print(f"Config: Initial Pass (Ctx: {args.initial_pass_ollama_num_ctx}, MaxGen: {args.initial_pass_max_new_tokens})")
+            print(f"        Intermediate Pass (Ctx: {args.intermediate_pass_ollama_num_ctx}, MaxGen: {args.intermediate_pass_max_new_tokens})")
+            print(f"        Final Pass (Ctx: {args.final_pass_ollama_num_ctx}, MaxGen: {args.final_pass_max_new_tokens})")
+            print(f"        Chunk Ratio: {args.target_chunk_ratio}, Overlap: {args.overlap_tokens}")
+            print(f"        DEBUG mode enabled: Intermediate files will be saved.")
 
         final_summary = summarize_transcript(
             full_text, tokenizer_for_counting, 
@@ -467,8 +500,9 @@ def main():
             args.DEBUG # Pass the debug flag
         )
 
-        print(f"\n--- FINAL SUMMARY ({model_name_for_iteration}) ---")
-        print(final_summary)
+        if args.DEBUG:
+            print(f"\n--- FINAL SUMMARY ({model_name_for_iteration}) ---")
+            print(final_summary)
 
         output_file_path_to_use = None
         sanitized_model_name = model_name_for_iteration.replace(":", "_").replace("/", "_")
@@ -496,11 +530,13 @@ def main():
                         f"Intermediate (Ctx: {args.intermediate_pass_ollama_num_ctx}, MaxGen: {args.intermediate_pass_max_new_tokens}), "
                         f"Final (Ctx: {args.final_pass_ollama_num_ctx}, MaxGen: {args.final_pass_max_new_tokens})\n\n")
                 f.write(final_summary)
-            print(f"\nFinal summary for {model_name_for_iteration} saved to {output_file_path_to_use}")
+            if args.DEBUG:
+                print(f"\nFinal summary for {model_name_for_iteration} saved to {output_file_path_to_use}")
         except Exception as e:
             print(f"Error saving summary for {model_name_for_iteration} to file '{output_file_path_to_use}': {e}")
         
-        print(f"{'='*20} FINISHED PROCESSING MODEL: {model_name_for_iteration} {'='*20}\n")
+        if args.DEBUG:
+            print(f"{'='*20} FINISHED PROCESSING MODEL: {model_name_for_iteration} {'='*20}\n")
 
 if __name__ == "__main__":
     main()
