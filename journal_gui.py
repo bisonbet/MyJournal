@@ -93,21 +93,21 @@ def create_interface(journal_viewer):
             padding: 10px;
             z-index: 1000;
             border-bottom: 1px solid var(--border-color-primary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
         .toggle-button {
-            position: fixed;
-            left: 200px;
-            top: 70px;
             margin: 0;
-            border-radius: 0 4px 4px 0;
-            border: none;
+            border-radius: 4px;
+            border: 1px solid var(--border-color-primary);
             background: var(--background-fill-primary);
             color: var(--body-text-color);
             cursor: pointer;
             transition: all 0.2s;
             z-index: 1000;
-            width: 30px;
-            height: 30px;
+            width: 40px;
+            height: 40px;
             padding: 0;
             display: flex;
             align-items: center;
@@ -119,8 +119,9 @@ def create_interface(journal_viewer):
         .toggle-button::before {
             content: "Toggle Sidebar";
             position: absolute;
-            bottom: 100%;
-            left: 0;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
             background: var(--background-fill-primary);
             padding: 4px 8px;
             border-radius: 4px;
@@ -129,12 +130,14 @@ def create_interface(journal_viewer):
             opacity: 0;
             transition: opacity 0.2s;
             pointer-events: none;
+            margin-top: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .toggle-button:hover::before {
             opacity: 1;
         }
         .sidebar-hidden .toggle-button {
-            left: 0;
+            margin-left: 0;
         }
         .main-content {
             margin-top: 60px;
@@ -142,14 +145,14 @@ def create_interface(journal_viewer):
     """) as interface:
         # Top bar with title and toggle
         with gr.Row(elem_classes="top-bar"):
-            with gr.Column(scale=20):
-                gr.Markdown("# MyJournal")
             with gr.Column(scale=1, min_width=50):
                 toggle_button = gr.Button(
                     "☰",
                     size="sm",
                     elem_classes="toggle-button"
                 )
+            with gr.Column(scale=20):
+                gr.Markdown("# MyJournal")
         
         # Add state for sidebar visibility
         sidebar_visible = gr.State(True)
@@ -190,7 +193,12 @@ def create_interface(journal_viewer):
                 
                 # Save controls
                 save_button = gr.Button("Save Changes")
-                save_status = gr.Textbox(label="Status", interactive=False)
+                script_dropdown = gr.Dropdown(
+                    choices=["Export to PDF", "Generate Summary", "Word Cloud Analysis"],
+                    label="Run Script",
+                    interactive=True
+                )
+                script_status = gr.Textbox(label="Script Status", interactive=False)
             
             # Main content column
             with gr.Column(scale=2) as main_column:
@@ -257,6 +265,20 @@ def create_interface(journal_viewer):
                 toggle_button: gr.update(elem_classes=["toggle-button", "sidebar-hidden"] if not new_state else ["toggle-button"])
             }
         
+        def run_script(script_name):
+            if not script_name:
+                return "No script selected"
+            try:
+                if script_name == "Export to PDF":
+                    return "PDF export functionality will be implemented"
+                elif script_name == "Generate Summary":
+                    return "Summary generation will be implemented"
+                elif script_name == "Word Cloud Analysis":
+                    return "Word cloud analysis will be implemented"
+                return f"Running {script_name}..."
+            except Exception as e:
+                return f"Error running script: {str(e)}"
+        
         journal_type.change(
             fn=update_file_list,
             inputs=[journal_type],
@@ -290,7 +312,7 @@ def create_interface(journal_viewer):
         save_button.click(
             fn=journal_viewer.save_file,
             inputs=[file_dropdown, editor],
-            outputs=[save_status]
+            outputs=[script_status]
         )
         
         find_replace_button.click(
@@ -309,6 +331,12 @@ def create_interface(journal_viewer):
             fn=toggle_sidebar,
             inputs=[sidebar_visible],
             outputs=[sidebar_visible, left_column, main_column, toggle_button]
+        )
+        
+        script_dropdown.change(
+            fn=run_script,
+            inputs=[script_dropdown],
+            outputs=[script_status]
         )
         
         return interface
