@@ -2,11 +2,12 @@
 
 A way to take audio files recorded during the way and extract the data to give a summary of your day.  This includes the ability to get notes, find tasks you forgot, or even for posterity!
 
-This system provides a comprehensive solution for transcribing audio files, generating summaries, and converting WAV files to MP3 format. It consists of three main scripts:
+This system provides a comprehensive solution for transcribing audio files, generating summaries, and converting WAV files to MP3 format. It consists of four main components:
 
 1. `diarize-audio.py` - Main orchestration script
 2. `transcribeTHIS.py` - Handles audio transcription using WhisperX
 3. `summarizeTHIS.py` - Generates summaries of the transcriptions
+4. `journal_gui.py` - Graphical user interface for easy interaction
 
 ## Setup
 
@@ -26,18 +27,28 @@ source venv/bin/activate  # On Linux/Mac
 .\venv\Scripts\activate  # On Windows
 
 # Install required packages
-pip install whisperx
-pip install tiktoken
-pip install noisereduce
-pip install soundfile
-pip install numpy
-pip install scipy
-pip install pydub
+pip install -r requirements.txt
 ```
 
 ## Usage
 
-### Main Orchestration Script (`diarize-audio.py`)
+### Graphical User Interface (GUI)
+
+The easiest way to use MyJournal is through the GUI:
+
+```bash
+python journal_gui.py
+```
+
+The GUI provides a user-friendly interface to:
+- Upload and process audio files
+- View transcriptions and summaries
+- Manage your journal entries
+- Configure processing options
+
+### Command Line Interface
+
+#### Main Orchestration Script (`diarize-audio.py`)
 
 The main script orchestrates the entire process:
 
@@ -91,17 +102,22 @@ Generates summaries of the transcriptions using multiple models.
 
 ## Example Usage
 
-1. Basic usage with debug mode:
+1. Using the GUI:
+```bash
+python journal_gui.py
+```
+
+2. Basic usage with debug mode:
 ```bash
 python diarize-audio.py /path/to/wavs YOUR_HF_TOKEN
 ```
 
-2. Production mode with custom summarization options:
+3. Production mode with custom summarization options:
 ```bash
 python diarize-audio.py /path/to/wavs YOUR_HF_TOKEN --production --output_file custom_output
 ```
 
-3. With noise reduction disabled:
+4. With noise reduction disabled:
 ```bash
 python diarize-audio.py /path/to/wavs YOUR_HF_TOKEN --disable-noise-reduction
 ```
@@ -119,4 +135,5 @@ The system generates:
 - The system requires a Hugging Face token for WhisperX operation
 - Debug mode is enabled by default unless `--production` is specified
 - WAV files are preserved in debug mode and deleted after MP3 conversion in production mode
-- The system supports various audio preprocessing options for optimal transcription quality 
+- The system supports various audio preprocessing options for optimal transcription quality
+- The GUI provides an intuitive interface for all features available in the command-line tools
