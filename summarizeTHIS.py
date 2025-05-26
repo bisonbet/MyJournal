@@ -194,9 +194,18 @@ def summarize_transcript(full_text, tokenizer_for_counting, ollama_url, ollama_m
     prompt_template_initial_chunk = """
 This is an excerpt from a day's audio transcript. It includes various conversations, spoken content (which may include personal interactions, media like TV shows, or other background audio), and speaker labels where available. Your primary goal is to extract and summarize the most meaningful information relevant to the user's activities, discussions, and commitments.
 
+IMPORTANT FILTERING GUIDELINES:
+* Exclude content that is clearly from TV shows, movies, or entertainment media, especially:
+  - Crime shows, murder mysteries, or detective stories
+  - Dramatic or sensational content that is clearly fictional
+  - News broadcasts about distant events not directly relevant to the user
+  - Entertainment programming that doesn't relate to the user's actual activities
+* Focus on real-world interactions, personal discussions, and actual activities
+* If uncertain whether content is from media or real life, prioritize real-world content
+
 Please produce a detailed yet concise summary of this excerpt, specifically focusing on:
 
-* **Key Topics Discussed:** What were the main subjects of conversation or focus?
+* **Key Topics Discussed:** What were the main subjects of conversation or focus? (Excluding entertainment/media content)
 * **Important Decisions:** What significant decisions were made or actively considered?
 * **Salient Questions Asked:** What key questions were posed that reveal important uncertainties, information needs, or areas for future exploration?
 * **Clear Action Items & Tasks:** What specific tasks, assignments, or follow-ups were mentioned or agreed upon? Identify who is responsible if stated.

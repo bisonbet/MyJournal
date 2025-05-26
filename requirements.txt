@@ -1,0 +1,13 @@
+gradio>=4.0.0
+markdown>=3.4.0
+whisperx>=3.1.0
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.20.0
+scipy>=1.7.0
+soundfile>=0.12.1
+noisereduce>=2.0.1
+pydub>=0.25.1
+requests>=2.31.0
+tiktoken>=0.5.0
+ffmpeg-python>=0.2.0 
