@@ -83,11 +83,81 @@ class JournalViewer:
         return markdown.markdown(content, extensions=['extra', 'codehilite'])
 
 def create_interface(journal_viewer):
-    with gr.Blocks(title="Journal Viewer", theme=gr.themes.Soft()) as interface:
-        gr.Markdown("# Journal Viewer")
+    with gr.Blocks(title="MyJournal", theme=gr.themes.Soft(), css="""
+        .top-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--background-fill-primary);
+            padding: 10px;
+            z-index: 1000;
+            border-bottom: 1px solid var(--border-color-primary);
+        }
+        .toggle-button {
+            position: fixed;
+            left: 200px;
+            top: 70px;
+            margin: 0;
+            border-radius: 0 4px 4px 0;
+            border: none;
+            background: var(--background-fill-primary);
+            color: var(--body-text-color);
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 1000;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .toggle-button:hover {
+            background: var(--background-fill-secondary);
+        }
+        .toggle-button::before {
+            content: "Toggle Sidebar";
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            background: var(--background-fill-primary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        .toggle-button:hover::before {
+            opacity: 1;
+        }
+        .sidebar-hidden .toggle-button {
+            left: 0;
+        }
+        .main-content {
+            margin-top: 60px;
+        }
+    """) as interface:
+        # Top bar with title and toggle
+        with gr.Row(elem_classes="top-bar"):
+            with gr.Column(scale=20):
+                gr.Markdown("# MyJournal")
+            with gr.Column(scale=1, min_width=50):
+                toggle_button = gr.Button(
+                    "☰",
+                    size="sm",
+                    elem_classes="toggle-button"
+                )
         
-        with gr.Row():
-            with gr.Column(scale=1):
+        # Add state for sidebar visibility
+        sidebar_visible = gr.State(True)
+        
+        # Main content area
+        with gr.Row(elem_classes="main-content"):
+            # Left column in a collapsible container
+            with gr.Column(scale=1, min_width=200) as left_column:
                 # Journal type selector
                 journal_type = gr.Dropdown(
                     choices=["All"] + journal_viewer.journal_types,
@@ -103,47 +173,94 @@ def create_interface(journal_viewer):
                     interactive=True
                 )
                 
-                # New journal creation
-                with gr.Group():
-                    gr.Markdown("### Create New Journal")
-                    new_journal_type = gr.Dropdown(
-                        choices=journal_viewer.journal_types,
-                        label="Type",
-                        interactive=True
-                    )
-                    new_journal_title = gr.Textbox(
-                        label="Title",
-                        placeholder="Enter journal title"
-                    )
-                    create_button = gr.Button("Create New Journal")
-                    create_status = gr.Textbox(label="Status", interactive=False)
+                # Side-by-side toggle
+                side_by_side = gr.Checkbox(
+                    label="Side-by-Side View",
+                    value=False,
+                    interactive=True
+                )
+                
+                # Second file browser (for side-by-side)
+                file_dropdown2 = gr.Dropdown(
+                    choices=journal_viewer._get_markdown_files(),
+                    label="Select Second File",
+                    interactive=True,
+                    visible=False
+                )
                 
                 # Save controls
                 save_button = gr.Button("Save Changes")
                 save_status = gr.Textbox(label="Status", interactive=False)
             
-            with gr.Column(scale=2):
+            # Main content column
+            with gr.Column(scale=2) as main_column:
                 with gr.Tabs():
                     with gr.TabItem("Edit"):
-                        editor = gr.Textbox(
-                            label="Editor",
-                            lines=20,
-                            show_label=False,
-                            interactive=True
-                        )
+                        with gr.Group():
+                            with gr.Row():
+                                with gr.Column(scale=1):
+                                    editor = gr.Textbox(
+                                        label="Editor",
+                                        lines=20,
+                                        show_label=False,
+                                        interactive=True
+                                    )
+                                    with gr.Row():
+                                        find_text = gr.Textbox(
+                                            label="Find",
+                                            placeholder="Text to find",
+                                            scale=2
+                                        )
+                                        replace_text = gr.Textbox(
+                                            label="Replace",
+                                            placeholder="Text to replace with",
+                                            scale=2
+                                        )
+                                        find_replace_button = gr.Button("Find & Replace", scale=1)
+                                
+                                editor2 = gr.Textbox(
+                                    label="Second Editor",
+                                    lines=20,
+                                    show_label=False,
+                                    interactive=True,
+                                    visible=False
+                                )
+                    
                     with gr.TabItem("Preview"):
-                        preview = gr.HTML(label="Preview")
+                        with gr.Row():
+                            preview = gr.HTML(label="Preview")
+                            preview2 = gr.HTML(label="Second Preview", visible=False)
         
         # Event handlers
         def update_file_list(journal_type):
-            if journal_type == "All":
-                return gr.Dropdown.update(choices=journal_viewer._get_markdown_files())
-            return gr.Dropdown.update(choices=journal_viewer._get_markdown_files(journal_type))
+            files = journal_viewer._get_markdown_files(journal_type if journal_type != "All" else None)
+            return gr.update(choices=files), gr.update(choices=files)
+        
+        def find_replace(text, find, replace):
+            if not find:
+                return text
+            return text.replace(find, replace)
+        
+        def toggle_side_by_side(show_side_by_side):
+            return {
+                file_dropdown2: gr.update(visible=show_side_by_side),
+                editor2: gr.update(visible=show_side_by_side),
+                preview2: gr.update(visible=show_side_by_side)
+            }
+        
+        def toggle_sidebar(current_state):
+            new_state = not current_state
+            return {
+                sidebar_visible: new_state,
+                left_column: gr.update(visible=new_state),
+                main_column: gr.update(scale=1 if new_state else 3),
+                toggle_button: gr.update(elem_classes=["toggle-button", "sidebar-hidden"] if not new_state else ["toggle-button"])
+            }
         
         journal_type.change(
             fn=update_file_list,
             inputs=[journal_type],
-            outputs=[file_dropdown]
+            outputs=[file_dropdown, file_dropdown2]
         )
         
         file_dropdown.change(
@@ -152,10 +269,22 @@ def create_interface(journal_viewer):
             outputs=[editor, preview]
         )
         
+        file_dropdown2.change(
+            fn=journal_viewer.load_file,
+            inputs=[file_dropdown2],
+            outputs=[editor2, preview2]
+        )
+        
         editor.change(
             fn=journal_viewer._render_markdown,
             inputs=[editor],
             outputs=[preview]
+        )
+        
+        editor2.change(
+            fn=journal_viewer._render_markdown,
+            inputs=[editor2],
+            outputs=[preview2]
         )
         
         save_button.click(
@@ -164,10 +293,22 @@ def create_interface(journal_viewer):
             outputs=[save_status]
         )
         
-        create_button.click(
-            fn=journal_viewer.create_new_journal,
-            inputs=[new_journal_type, new_journal_title],
-            outputs=[create_status]
+        find_replace_button.click(
+            fn=find_replace,
+            inputs=[editor, find_text, replace_text],
+            outputs=[editor]
+        )
+        
+        side_by_side.change(
+            fn=toggle_side_by_side,
+            inputs=[side_by_side],
+            outputs=[file_dropdown2, editor2, preview2]
+        )
+        
+        toggle_button.click(
+            fn=toggle_sidebar,
+            inputs=[sidebar_visible],
+            outputs=[sidebar_visible, left_column, main_column, toggle_button]
         )
         
         return interface

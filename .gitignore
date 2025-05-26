@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+myjournal/
 
 # Spyder project settings
 .spyderproject
@@ -174,6 +175,5 @@ cython_debug/
 .pypirc
 
 # Journal files
-journals/*/*.md
-!journals/*/*EXAMPLE*.md
-!journals/*/README.md
+journals/
+!journals/README.md

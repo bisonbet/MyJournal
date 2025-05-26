@@ -202,7 +202,7 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         print(f"Converting {wav_filename} to {mp3_filename}...")
         ffmpeg_command = [
             "ffmpeg", "-i", wav_file_path, "-y", "-vn",
-            "-ar", "44100", "-ac", "1", "-b:a", "128k",
+            "-ar", "16000", "-ac", "1", "-b:a", "32k",
             mp3_file_path
         ]
 
