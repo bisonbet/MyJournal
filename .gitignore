@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Journal files
+journals/*/*.md
+!journals/*/*EXAMPLE*.md
+!journals/*/README.md
