@@ -326,7 +326,8 @@ def main():
     interface.launch(
         server_name=args.host,
         server_port=args.port,
-        share=False
+        share=False,
+        pwa=True
     )
 
 if __name__ == "__main__":
