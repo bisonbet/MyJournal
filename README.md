@@ -2,12 +2,13 @@
 
 A way to take audio files recorded during the way and extract the data to give a summary of your day.  This includes the ability to get notes, find tasks you forgot, or even for posterity!
 
-This system provides a comprehensive solution for transcribing audio files, generating summaries, and converting WAV files to MP3 format. It consists of four main components:
+This system provides a comprehensive solution for transcribing audio files, generating summaries, and converting WAV files to MP3 format. It consists of five main components:
 
-1. `diarize-audio.py` - Main orchestration script
-2. `transcribeTHIS.py` - Handles audio transcription using WhisperX
-3. `summarizeTHIS.py` - Generates summaries of the transcriptions
-4. `journal_gui.py` - Graphical user interface for easy interaction
+1. `create_dirs.py` - Creates the hierarchical directory structure for organizing journal entries
+2. `diarize-audio.py` - Main orchestration script
+3. `transcribeTHIS.py` - Handles audio transcription using WhisperX
+4. `summarizeTHIS.py` - Generates summaries of the transcriptions
+5. `journal_gui.py` - Graphical user interface for easy interaction
 
 ## Setup
 
@@ -31,6 +32,21 @@ pip install -r requirements.txt
 ```
 
 ## Usage
+
+### Directory Structure Setup
+
+First, create the necessary directory structure for organizing your journal entries:
+
+```bash
+python create_dirs.py
+```
+
+This will create a hierarchical structure for:
+- Daily entries: `./daily/YYYY/MonthName/MMDDYYYY`
+- Weekly entries: `./weekly/YYYY/MonthName/WeekOfMMDDYYYY`
+- Monthly entries: `./monthly/YYYY/MonthName`
+
+The structure spans the next 12 months from the current date.
 
 ### Graphical User Interface (GUI)
 
