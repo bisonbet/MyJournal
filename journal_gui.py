@@ -436,7 +436,7 @@ def create_interface(journal_viewer):
                 toggle_button: gr.update(elem_classes=["toggle-button", "sidebar-hidden"] if not new_state else ["toggle-button"])
             }
         
-        def run_script(script_name, file1, file2=None):
+        def run_script(script_name, current_path, file1, file2=None):
             if not script_name:
                 return "No script selected", None
                 
@@ -458,8 +458,6 @@ def create_interface(journal_viewer):
                         return result, None
                         
                 elif script_name == "Generate Summary":
-                    # Get the current path from the current_path textbox
-                    current_path = current_path.value
                     if not current_path:
                         return "No directory selected", None
                         
@@ -555,7 +553,7 @@ def create_interface(journal_viewer):
         # Connect the script runner
         run_script_button.click(
             fn=run_script,
-            inputs=[script_dropdown, file_dropdown, file_dropdown2],
+            inputs=[script_dropdown, current_path, file_dropdown, file_dropdown2],
             outputs=[script_status, pdf_download]
         )
         
