@@ -4,18 +4,25 @@ import sys
 import subprocess
 import argparse
 import shutil
-import glob # Added for finding WAV files
+import glob
+import logging
+from datetime import datetime
+from pathlib import Path
+from logging_config import setup_logging
 
 # --- Configuration ---
 SCRIPT1_NAME = "transcribeTHIS.py"
 SCRIPT2_NAME = "summarizeTHIS.py"
 
+# Initialize logger with DEBUG level by default since this is the orchestrator
+logger = setup_logging('diarize', True)  # Default to debug mode
+
 def check_script_exists(script_name):
     """Checks if a script exists in the PWD."""
     script_path = os.path.join(os.getcwd(), script_name)
     if not os.path.exists(script_path):
-        print(f"Error: Script '{script_name}' not found in the current directory ({os.getcwd()}).")
-        print(f"Please ensure {SCRIPT1_NAME} and {SCRIPT2_NAME} are in the same directory as this orchestrator (diarize-audio.py).")
+        logger.error(f"Script '{script_name}' not found in the current directory ({os.getcwd()}).")
+        logger.error(f"Please ensure {SCRIPT1_NAME} and {SCRIPT2_NAME} are in the same directory as this orchestrator (diarize-audio.py).")
         return False
     return True
 
@@ -24,13 +31,14 @@ def run_script1(abs_wav_directory, hf_token, is_orchestrator_debug_mode):
     Runs transcribeTHIS.py to process WAV files and create a concatenated transcript.
     Returns the path to the concatenated transcript file if successful, None otherwise.
     """
-    print(f"\n--- Running Transcription Script ({SCRIPT1_NAME}) ---")
-    print(f"Input WAV Directory: {abs_wav_directory}")
+    logger.info(f"\n--- Running Transcription Script ({SCRIPT1_NAME}) ---")
+    logger.info(f"Input WAV Directory: {abs_wav_directory}")
 
     script1_path = os.path.join(os.getcwd(), SCRIPT1_NAME)
     
     command_to_execute = [
         sys.executable,
+        "-u",  # Force Python to run unbuffered
         script1_path,
         abs_wav_directory,
         "--hf_token", hf_token 
@@ -54,78 +62,84 @@ def run_script1(abs_wav_directory, hf_token, is_orchestrator_debug_mode):
     except ValueError:
         pass 
     
-    print(f"Executing: {' '.join(command_for_display)}")
+    logger.info(f"Executing: {' '.join(command_for_display)}")
     
     try:
-        process = subprocess.run(command_to_execute, capture_output=True, text=True, check=False, env=os.environ.copy())
+        # Create process with real-time output
+        process = subprocess.Popen(
+            command_to_execute,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line buffered
+            env=os.environ.copy(),
+            universal_newlines=True
+        )
 
-        if process.returncode == 0:
-            print(f"Script '{SCRIPT1_NAME}' completed successfully.") # This doesn't mean the file exists yet, just that the script exited 0
-            # We rely on the script's own output to know the filename if it's dynamic,
-            # OR we hardcode the expected name if it's fixed.
-            # Based on user's latest error, transcribeTHIS.py now outputs a file named
-            # {directory_basename}_transcription_summary.txt
+        # Read both stdout and stderr in real-time using select
+        import select
+        import time
 
-            if process.stdout:
-                print(f"\n{SCRIPT1_NAME} STDOUT:")
-                print(process.stdout)
-            if process.stderr:
-                print(f"\n{SCRIPT1_NAME} STDERR (may include info from whisperx):")
-                print(process.stderr)
+        # Set up file descriptors for select
+        stdout_fd = process.stdout.fileno()
+        stderr_fd = process.stderr.fileno()
+        
+        while True:
+            # Check if process has finished
+            if process.poll() is not None:
+                break
+                
+            # Use select to check for available output
+            reads = [stdout_fd, stderr_fd]
+            ret = select.select(reads, [], [], 0.1)  # 0.1 second timeout
+            
+            if stdout_fd in ret[0]:
+                line = process.stdout.readline()
+                if line:
+                    print(line.strip(), flush=True)
+                    logger.info(line.strip())
+                    
+            if stderr_fd in ret[0]:
+                line = process.stderr.readline()
+                if line:
+                    print(line.strip(), flush=True)
+                    logger.warning(line.strip())
+            
+            # Small sleep to prevent CPU spinning
+            time.sleep(0.01)
 
+        # Read any remaining output
+        for line in process.stdout:
+            print(line.strip(), flush=True)
+            logger.info(line.strip())
+            
+        for line in process.stderr:
+            print(line.strip(), flush=True)
+            logger.warning(line.strip())
+
+        return_code = process.poll()
+
+        if return_code == 0:
+            logger.info(f"Script '{SCRIPT1_NAME}' completed successfully.")
             dir_basename = os.path.basename(abs_wav_directory)
-            # MODIFICATION: Update expected filename based on new information
             expected_filename_suffix = "_transcription_summary.txt"
             concatenated_txt_path = os.path.join(abs_wav_directory, f"{dir_basename}{expected_filename_suffix}")
 
             if os.path.exists(concatenated_txt_path):
-                print(f"Concatenated transcript FOUND by orchestrator: {concatenated_txt_path}")
+                logger.info(f"Concatenated transcript FOUND by orchestrator: {concatenated_txt_path}")
                 return concatenated_txt_path
             else:
-                # Attempt to find the filename from transcribeTHIS.py's stdout as a fallback
-                # This is a bit fragile but can help if the naming convention is slightly off or changes.
-                stdout_last_line = ""
-                if process.stdout:
-                    lines = process.stdout.strip().split('\n')
-                    if lines:
-                        # Example line: "All relevant .txt files concatenated into /path/to/file.txt"
-                        search_phrase = "concatenated into "
-                        for line in reversed(lines):
-                            if search_phrase in line:
-                                stdout_last_line = line
-                                break
-                
-                if stdout_last_line:
-                    try:
-                        # Extract the path from the stdout line
-                        actual_path_from_stdout = stdout_last_line.split(search_phrase, 1)[1].strip()
-                        if os.path.exists(actual_path_from_stdout):
-                            print(f"Warning: Expected file '{concatenated_txt_path}' not found.")
-                            print(f"However, found file mentioned in {SCRIPT1_NAME}'s STDOUT: '{actual_path_from_stdout}'")
-                            print(f"Proceeding with file: {actual_path_from_stdout}")
-                            return actual_path_from_stdout
-                        else:
-                            print(f"Error: {SCRIPT1_NAME} finished, but expected output file '{concatenated_txt_path}' was not found.")
-                            print(f"Also, the path mentioned in {SCRIPT1_NAME}'s STDOUT ('{actual_path_from_stdout}') does not exist or could not be parsed correctly.")
-                            return None
-                    except Exception as e_parse:
-                         print(f"Error: {SCRIPT1_NAME} finished, but expected output file '{concatenated_txt_path}' was not found.")
-                         print(f"Tried to parse filename from {SCRIPT1_NAME} stdout but failed: {e_parse}")
-                         return None       
-                else:
-                    print(f"Error: {SCRIPT1_NAME} finished, but expected output file '{concatenated_txt_path}' was not found.")
-                    print(f"Could not determine actual output filename from {SCRIPT1_NAME}'s STDOUT.")
-                    return None
+                logger.error(f"Error: {SCRIPT1_NAME} finished, but expected output file '{concatenated_txt_path}' was not found.")
+                return None
         else:
-            print(f"Error: {SCRIPT1_NAME} failed with return code {process.returncode}.")
-            if process.stdout: print(f"\n{SCRIPT1_NAME} STDOUT:\n{process.stdout}")
-            if process.stderr: print(f"\n{SCRIPT1_NAME} STDERR:\n{process.stderr}")
+            logger.error(f"Error: {SCRIPT1_NAME} failed with return code {return_code}.")
             return None
+
     except FileNotFoundError:
-        print(f"Error: Could not find the Python interpreter or the script '{script1_path}'.")
+        logger.error(f"Error: Could not find the Python interpreter or the script '{script1_path}'.")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred while trying to run {SCRIPT1_NAME}: {e}")
+        logger.error(f"An unexpected error occurred while trying to run {SCRIPT1_NAME}: {e}")
         return None
 
 def run_script2(transcript_file_path, is_orchestrator_debug_mode, script2_extra_args):
@@ -133,8 +147,8 @@ def run_script2(transcript_file_path, is_orchestrator_debug_mode, script2_extra_
     Runs summarizeTHIS.py with the provided transcript file and extra arguments.
     Returns True if successful, False otherwise.
     """
-    print(f"\n--- Running Summarization Script ({SCRIPT2_NAME}) ---")
-    print(f"Input Transcript File: {transcript_file_path}")
+    logger.info(f"\n--- Running Summarization Script ({SCRIPT2_NAME}) ---")
+    logger.info(f"Input Transcript File: {transcript_file_path}")
 
     script2_path = os.path.join(os.getcwd(), SCRIPT2_NAME)
     command = [
@@ -149,25 +163,47 @@ def run_script2(transcript_file_path, is_orchestrator_debug_mode, script2_extra_
     if script2_extra_args:
         command.extend(script2_extra_args)
 
-    print(f"Executing: {' '.join(command)}") 
+    logger.info(f"Executing: {' '.join(command)}") 
     try:
-        process = subprocess.run(command, capture_output=True, text=True, check=False, env=os.environ.copy())
+        # Create process with real-time output
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line buffered
+            env=os.environ.copy()
+        )
 
-        print(f"\n{SCRIPT2_NAME} Output:")
-        if process.stdout: print(f"STDOUT:\n{process.stdout}")
-        if process.stderr: print(f"STDERR:\n{process.stderr}")
+        # Read output in real-time
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(output.strip())  # Print immediately
+                logger.info(output.strip())
 
-        if process.returncode == 0:
-            print(f"Script '{SCRIPT2_NAME}' completed successfully.")
+        # Get any remaining stderr
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            print(stderr_output.strip())  # Print immediately
+            logger.warning(stderr_output.strip())
+
+        return_code = process.poll()
+
+        if return_code == 0:
+            logger.info(f"Script '{SCRIPT2_NAME}' completed successfully.")
             return True
         else:
-            print(f"Error: {SCRIPT2_NAME} failed with return code {process.returncode}.")
+            logger.error(f"Error: {SCRIPT2_NAME} failed with return code {return_code}.")
             return False
+
     except FileNotFoundError:
-        print(f"Error: Could not find the Python interpreter or the script '{script2_path}'.")
+        logger.error(f"Error: Could not find the Python interpreter or the script '{script2_path}'.")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred while trying to run {SCRIPT2_NAME}: {e}")
+        logger.error(f"An unexpected error occurred while trying to run {SCRIPT2_NAME}: {e}")
         return False
 
 def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
@@ -176,10 +212,10 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
     Deletes original .WAV files if not in debug mode.
     Requires ffmpeg.
     """
-    print(f"\n--- Converting WAV files to MP3 in {abs_wav_directory} ---")
+    logger.info(f"\n--- Converting WAV files to MP3 in {abs_wav_directory} ---")
     if not shutil.which("ffmpeg"):
-        print("Error: ffmpeg command not found. Cannot convert WAV to MP3.")
-        print("Please install ffmpeg and ensure it is in your PATH.")
+        logger.error("Error: ffmpeg command not found. Cannot convert WAV to MP3.")
+        logger.error("Please install ffmpeg and ensure it is in your PATH.")
         return False
 
     wav_files_found = []
@@ -187,7 +223,7 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         wav_files_found.extend(glob.glob(os.path.join(abs_wav_directory, ext)))
 
     if not wav_files_found:
-        print("No .WAV files found to convert in this directory.")
+        logger.info("No .WAV files found to convert in this directory.")
         return True
 
     success_count = 0
@@ -199,7 +235,7 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         mp3_filename = base_name + ".mp3"
         mp3_file_path = os.path.join(abs_wav_directory, mp3_filename)
 
-        print(f"Converting {wav_filename} to {mp3_filename}...")
+        logger.info(f"Converting {wav_filename} to {mp3_filename}...")
         ffmpeg_command = [
             "ffmpeg", "-i", wav_file_path, "-y", "-vn",
             "-ar", "16000", "-ac", "1", "-b:a", "32k",
@@ -207,41 +243,52 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         ]
 
         try:
-            result = subprocess.run(ffmpeg_command, capture_output=True, text=True, check=False)
-            if result.returncode == 0:
-                print(f"Successfully converted {wav_filename} to {mp3_filename}.")
+            # Create process with real-time output
+            process = subprocess.Popen(
+                ffmpeg_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,  # Line buffered
+                env=os.environ.copy()
+            )
+
+            # Read output in real-time
+            while True:
+                output = process.stderr.readline()  # ffmpeg outputs progress to stderr
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    print(output.strip())  # Print immediately
+                    logger.info(output.strip())
+
+            return_code = process.poll()
+
+            if return_code == 0:
+                logger.info(f"Successfully converted {wav_filename} to {mp3_filename}.")
                 success_count += 1
                 if not is_orchestrator_debug_mode:
                     try:
                         os.remove(wav_file_path)
-                        print(f"Deleted original WAV file (production mode): {wav_filename}")
+                        logger.info(f"Deleted original WAV file (production mode): {wav_filename}")
                     except Exception as e_del:
-                        print(f"Error deleting WAV file {wav_filename}: {e_del}")
+                        logger.error(f"Error deleting WAV file {wav_filename}: {e_del}")
             else:
-                print(f"Error converting {wav_filename}:")
-                if result.stderr: print(f"ffmpeg STDERR:\n{result.stderr}")
-                else: print("No STDERR from ffmpeg.")
+                logger.error(f"Error converting {wav_filename}")
                 failure_count += 1
+
         except Exception as e_conv:
-            print(f"An unexpected error occurred during conversion of {wav_filename}: {e_conv}")
+            logger.error(f"An unexpected error occurred during conversion of {wav_filename}: {e_conv}")
             failure_count += 1
 
-    print(f"\nMP3 Conversion Summary: {success_count} succeeded, {failure_count} failed.")
+    logger.info(f"\nMP3 Conversion Summary: {success_count} succeeded, {failure_count} failed.")
     if failure_count > 0:
-        print("Warning: Some WAV files failed to convert.")
+        logger.warning("Warning: Some WAV files failed to convert.")
         return False
     return True
 
 def main():
     """Main function to orchestrate the script execution."""
-    if not check_script_exists(SCRIPT1_NAME) or not check_script_exists(SCRIPT2_NAME):
-        sys.exit(1)
-
-    if not shutil.which("whisperx"):
-        print("Warning: 'whisperx' command not found. Transcription will likely fail.")
-    if not shutil.which("ffmpeg"):
-        print("Warning: 'ffmpeg' command not found. MP3 conversion will fail.")
-
     parser = argparse.ArgumentParser(
         description=f"Orchestrates WAV processing ({SCRIPT1_NAME}), summarization ({SCRIPT2_NAME}), and MP3 conversion.",
         formatter_class=argparse.RawTextHelpFormatter
@@ -259,43 +306,54 @@ def main():
     args, script2_extra_args = parser.parse_known_args()
     is_orchestrator_debug_mode = not args.production
 
+    # Update logger with debug mode (will be DEBUG unless --production is used)
+    logger = setup_logging('diarize', is_orchestrator_debug_mode)
+
+    if not check_script_exists(SCRIPT1_NAME) or not check_script_exists(SCRIPT2_NAME):
+        sys.exit(1)
+
+    if not shutil.which("whisperx"):
+        logger.warning("Warning: 'whisperx' command not found. Transcription will likely fail.")
+    if not shutil.which("ffmpeg"):
+        logger.warning("Warning: 'ffmpeg' command not found. MP3 conversion will fail.")
+
     if not args.hf_token:
-        print("Error: Hugging Face token not found as an argument or HFTOKEN environment variable.")
+        logger.error("Error: Hugging Face token not found as an argument or HFTOKEN environment variable.")
         parser.print_help()
         sys.exit(1)
     
     if not os.path.isdir(args.wav_directory):
-        print(f"Error: Specified WAV directory not found: {args.wav_directory}")
+        logger.error(f"Error: Specified WAV directory not found: {args.wav_directory}")
         sys.exit(1)
 
     abs_wav_directory = os.path.abspath(args.wav_directory)
 
-    print("Starting diarization, summarization, and MP3 conversion orchestration...")
-    print(f"Mode: {'DEBUG' if is_orchestrator_debug_mode else 'PRODUCTION'}")
-    print(f"WAV Directory (Absolute): {abs_wav_directory}")
+    logger.info("Starting diarization, summarization, and MP3 conversion orchestration...")
+    logger.info(f"Mode: {'DEBUG' if is_orchestrator_debug_mode else 'PRODUCTION'}")
+    logger.info(f"WAV Directory (Absolute): {abs_wav_directory}")
     hf_token_display = f"'{'*' * (len(args.hf_token) - 4) + args.hf_token[-4:]}'" if args.hf_token and len(args.hf_token) > 4 else "'Provided'"
-    print(f"Hugging Face Token: {hf_token_display}")
+    logger.info(f"Hugging Face Token: {hf_token_display}")
 
     concatenated_transcript_file = run_script1(abs_wav_directory, args.hf_token, is_orchestrator_debug_mode)
     if not concatenated_transcript_file:
-        print(f"\nOrchestration failed: {SCRIPT1_NAME} did not produce the expected output file correctly.")
+        logger.error(f"\nOrchestration failed: {SCRIPT1_NAME} did not produce the expected output file correctly.")
         sys.exit(1)
 
     script2_success = run_script2(concatenated_transcript_file, is_orchestrator_debug_mode, script2_extra_args)
     if not script2_success:
-        print(f"\nOrchestration partially failed: {SCRIPT2_NAME} reported errors.")
-        print("Proceeding with MP3 conversion despite summarization issues...")
+        logger.error(f"\nOrchestration partially failed: {SCRIPT2_NAME} reported errors.")
+        logger.info("Proceeding with MP3 conversion despite summarization issues...")
 
     mp3_conversion_success = convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode)
     if not mp3_conversion_success:
-        print("\nOrchestration warning: MP3 conversion step encountered issues.")
+        logger.warning("\nOrchestration warning: MP3 conversion step encountered issues.")
 
     if not script2_success or not mp3_conversion_success:
-        print("\n--- Orchestration Finished with warnings/errors ---")
+        logger.warning("\n--- Orchestration Finished with warnings/errors ---")
         if not script2_success : sys.exit(2)
         elif not mp3_conversion_success: sys.exit(3) 
     else:
-        print("\n--- Orchestration Finished Successfully ---")
+        logger.info("\n--- Orchestration Finished Successfully ---")
 
 if __name__ == "__main__":
     main()

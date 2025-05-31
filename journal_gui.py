@@ -10,6 +10,43 @@ import tempfile
 import base64
 import subprocess
 import sys
+import logging
+import logging.handlers
+
+# Configure logging
+def setup_logging():
+    # Create logs directory if it doesn't exist
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create a rotating file handler
+    log_file = log_dir / "journal_gui.log"
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Get the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Add handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# Set up logging at module level
+logger = setup_logging()
 
 class JournalViewer:
     def __init__(self, root_dir="journals"):
@@ -17,6 +54,7 @@ class JournalViewer:
         self.current_file = None
         self.journal_types = ["daily", "weekly", "monthly"]
         self._ensure_directory_structure()
+        logger.info(f"JournalViewer initialized with root directory: {self.root_dir}")
         
     def _get_yesterdays_path(self):
         """Get the path for yesterday's journal entry."""
@@ -444,27 +482,33 @@ def create_interface(journal_viewer):
                 if script_name == "Export to PDF":
                     # Filter out None values from file paths
                     files_to_export = [f for f in [file1, file2] if f]
+                    logger.info(f"Exporting to PDF: {files_to_export}")
                     result = journal_viewer.export_to_pdf(files_to_export)
                     
                     if isinstance(result, tuple) and len(result) == 2:
                         pdf_path, temp_dir = result
                         if pdf_path.startswith("Error"):
+                            logger.error(f"PDF export error: {pdf_path}")
                             return pdf_path, None
                         else:
                             # Store the temp directory in a global variable to prevent garbage collection
                             run_script.temp_dir = temp_dir
+                            logger.info(f"PDF exported successfully to: {pdf_path}")
                             return "PDF exported successfully", pdf_path
                     else:
+                        logger.error(f"PDF export error: {result}")
                         return result, None
                         
                 elif script_name == "Generate Summary":
                     if not current_path:
+                        logger.warning("No directory selected for summary generation")
                         return "No directory selected", None
                         
                     try:
                         # Convert relative path to full path
                         full_path = str(journal_viewer.root_dir / current_path)
-                        print(f"Running diarize-audio.py with path: {full_path}")
+                        logger.info(f"Running diarize-audio.py with path: {full_path}")
+                        
                         # Run diarize-audio.py with the full path
                         result = subprocess.run(
                             [sys.executable, "diarize-audio.py", full_path],
@@ -472,25 +516,35 @@ def create_interface(journal_viewer):
                             text=True,
                             check=True
                         )
-                        print(f"Script output: {result.stdout}")
+                        
+                        # Log all output
+                        if result.stdout:
+                            logger.info(f"Script stdout:\n{result.stdout}")
                         if result.stderr:
-                            print(f"Script errors: {result.stderr}")
+                            logger.warning(f"Script stderr:\n{result.stderr}")
+                            
                         return f"Summary generated successfully:\n{result.stdout}", None
+                        
                     except subprocess.CalledProcessError as e:
                         error_msg = f"Error generating summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
-                        print(error_msg)
+                        logger.error(error_msg)
                         return error_msg, None
+                        
                     except Exception as e:
                         error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
-                        print(error_msg)
+                        logger.error(error_msg, exc_info=True)
                         return error_msg, None
                         
                 elif script_name == "Word Cloud Analysis":
+                    logger.info("Word cloud analysis requested (not implemented)")
                     return "Word cloud analysis will be implemented", None
                     
                 return f"Running {script_name}...", None
+                
             except Exception as e:
-                return f"Error running script: {str(e)}", None
+                error_msg = f"Error running script: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                return error_msg, None
         
         # Initialize the temp_dir attribute for the run_script function
         run_script.temp_dir = None
@@ -606,6 +660,9 @@ def main():
     parser.add_argument("--port", type=int, default=45459, help="Port to listen on (default: 45459)")
     parser.add_argument("--root-dir", default="journals", help="Root directory for journals (default: journals)")
     args = parser.parse_args()
+    
+    logger.info(f"Starting Journal Viewer on {args.host}:{args.port}")
+    logger.info(f"Using root directory: {args.root_dir}")
     
     journal_viewer = JournalViewer(root_dir=args.root_dir)
     interface = create_interface(journal_viewer)

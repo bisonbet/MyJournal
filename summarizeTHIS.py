@@ -5,13 +5,17 @@ import os
 import json
 import tiktoken # For token counting for chunking
 import re
+import logging
+from logging_config import setup_logging
 
 # --- Configuration ---
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "cogito:32b"
+DEFAULT_OLLAMA_MODEL = "qwen3:30b-a3b"
+
+# Initialize logger
+logger = setup_logging('summarize', False)  # Default to non-debug mode
 
 MODELS_TO_RUN_LIST = [
-    "cogito:32b",
     "qwen3:30b-a3b",               
     "phi4-mini:latest",
     "granite3.3:8b"                 
@@ -465,6 +469,9 @@ def main():
 
 
     args = parser.parse_args()
+
+    # Update logger with debug mode
+    logger = setup_logging('summarize', args.DEBUG)
 
     if not check_ollama_status(args.ollama_url, args.DEBUG):
         return

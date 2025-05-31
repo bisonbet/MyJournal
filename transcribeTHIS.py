@@ -9,47 +9,134 @@ import tempfile
 import re
 from datetime import datetime
 import json
+import logging
+from pathlib import Path
+from logging_config import setup_logging
+import platform  # Add platform import for OS detection
+
+# Force Python to run unbuffered
+sys.stdout.reconfigure(line_buffering=True)  # Python 3.7+
+sys.stderr.reconfigure(line_buffering=True)  # Python 3.7+
+
+# Force flush on all output
+def force_flush():
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+# Initialize logger
+logger = setup_logging('transcribe', False)  # Default to non-debug mode
+
+# Ensure logging is unbuffered
+for handler in logger.handlers:
+    handler.setLevel(logging.INFO)
+    if isinstance(handler, logging.StreamHandler):
+        handler.flush = handler.stream.flush
 
 def debug_print(message, debug_mode=False):
-    """Print message only if debug mode is enabled."""
+    """Print debug messages if debug mode is enabled."""
     if debug_mode:
-        print(message)
+        logger.debug(message)
+        force_flush()
+
+# Determine default device and compute type based on OS
+if platform.system() == "Darwin":
+    DEFAULT_DEVICE = "mps"
+    DEFAULT_COMPUTE_TYPE = "auto"  # Let ctranslate2 choose the best compute type for MPS
+else:
+    DEFAULT_DEVICE = "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"
+    DEFAULT_COMPUTE_TYPE = "float16"
 
 # Attempt to import optional dependencies and provide guidance if missing
 try:
+    import torch
+    import torchaudio
+    import torch.nn.functional as F
+    TORCH_AVAILABLE = True
+    # Set device for torch operations
+    DEVICE = torch.device("mps" if platform.system() == "Darwin" else "cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Using {DEVICE} for audio processing")
+except ImportError:
+    logger.warning("INFO: For GPU-accelerated audio processing, please install 'torch' and 'torchaudio'.")
+    logger.warning("INFO: You can typically install them using: pip install torch torchaudio")
+    TORCH_AVAILABLE = False
+
+try:
     import soundfile as sf
     import numpy as np
-    # from scipy.io import wavfile # Not directly used, but often a dependency for audio tasks
     import noisereduce
 except ImportError:
-    print("INFO: For noise reduction, please install 'noisereduce', 'soundfile', 'numpy', and 'scipy'.")
-    print("INFO: You can typically install them using: pip install noisereduce soundfile numpy scipy")
-    noisereduce = None # Set to None if import fails
+    logger.warning("INFO: For noise reduction, please install 'noisereduce', 'soundfile', 'numpy', and 'scipy'.")
+    logger.warning("INFO: You can typically install them using: pip install noisereduce soundfile numpy scipy")
+    noisereduce = None
 
 try:
     from pydub import AudioSegment
     from pydub.exceptions import CouldntEncodeError
 except ImportError:
-    print("INFO: For audio normalization, please install 'pydub'.")
-    print("INFO: You can typically install it using: pip install pydub")
-    print("INFO: 'pydub' also requires ffmpeg or libav to be installed on your system.")
-    AudioSegment = None # Set to None if import fails
-
+    logger.warning("INFO: For audio normalization, please install 'pydub'.")
+    logger.warning("INFO: You can typically install it using: pip install pydub")
+    logger.warning("INFO: 'pydub' also requires ffmpeg or libav to be installed on your system.")
+    AudioSegment = None
 
 def apply_noise_reduction(input_path, output_path):
     """
-    Applies noise reduction to an audio file.
-    Requires 'noisereduce', 'soundfile', 'numpy', 'scipy'.
+    Applies noise reduction to an audio file using GPU acceleration if available.
     """
-    if not noisereduce or not sf: # Check for soundfile as well
-        print(f"Skipping noise reduction for {os.path.basename(input_path)} as 'noisereduce' or 'soundfile' library is not available.")
+    if TORCH_AVAILABLE:
+        try:
+            logger.info(f"Applying GPU-accelerated noise reduction to {os.path.basename(input_path)}...")
+            # Load audio using torchaudio
+            waveform, sample_rate = torchaudio.load(input_path)
+            
+            # Move to GPU if available
+            waveform = waveform.to(DEVICE)
+            
+            # Convert to mono if stereo
+            if waveform.shape[0] > 1:
+                logger.info("INFO: Audio is stereo, averaging channels to mono for noise reduction.")
+                waveform = torch.mean(waveform, dim=0, keepdim=True)
+            
+            # Apply noise reduction using spectral gating
+            # Convert to frequency domain
+            stft = torch.stft(waveform, n_fft=2048, hop_length=512, return_complex=True)
+            magnitude = torch.abs(stft)
+            phase = torch.angle(stft)
+            
+            # Estimate noise floor
+            noise_floor = torch.mean(magnitude, dim=-1, keepdim=True)
+            threshold = noise_floor * 1.5
+            
+            # Apply spectral gating
+            mask = (magnitude > threshold).float()
+            magnitude_filtered = magnitude * mask
+            
+            # Convert back to time domain
+            stft_filtered = magnitude_filtered * torch.exp(1j * phase)
+            waveform_filtered = torch.istft(stft_filtered, n_fft=2048, hop_length=512, length=waveform.shape[-1])
+            
+            # Move back to CPU for saving
+            waveform_filtered = waveform_filtered.cpu()
+            
+            # Save using torchaudio
+            torchaudio.save(output_path, waveform_filtered, sample_rate)
+            logger.info(f"GPU-accelerated noise reduction complete. Saved to: {os.path.basename(output_path)}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during GPU noise reduction: {e}")
+            logger.info("Falling back to CPU-based noise reduction...")
+    
+    # Fallback to CPU-based noise reduction
+    if not noisereduce or not sf:
+        logger.warning(f"Skipping noise reduction for {os.path.basename(input_path)} as required libraries are not available.")
         return False
+    
     try:
-        print(f"Applying noise reduction to {os.path.basename(input_path)}...")
+        logger.info(f"Applying CPU-based noise reduction to {os.path.basename(input_path)}...")
         data, rate = sf.read(input_path)
         
         if data.ndim > 1:
-            print("INFO: Audio is stereo, averaging channels to mono for noise reduction.")
+            logger.info("INFO: Audio is stereo, averaging channels to mono for noise reduction.")
             data_mono = np.mean(data, axis=1)
         else:
             data_mono = data
@@ -57,36 +144,69 @@ def apply_noise_reduction(input_path, output_path):
         reduced_noise_data = noisereduce.reduce_noise(y=data_mono, sr=rate, stationary=False, prop_decrease=0.75)
         
         sf.write(output_path, reduced_noise_data, rate)
-        print(f"Noise reduction complete. Saved to: {os.path.basename(output_path)}")
+        logger.info(f"Noise reduction complete. Saved to: {os.path.basename(output_path)}")
         return True
     except Exception as e:
-        print(f"Error during noise reduction for {os.path.basename(input_path)}: {e}")
+        logger.error(f"Error during noise reduction for {os.path.basename(input_path)}: {e}")
         return False
 
 def apply_normalization(input_path, output_path, target_dbfs=-20.0):
     """
-    Normalizes an audio file to a target dBFS.
-    Requires 'pydub' and ffmpeg/libav.
+    Normalizes an audio file using GPU acceleration if available.
     """
+    if TORCH_AVAILABLE:
+        try:
+            logger.info(f"Applying GPU-accelerated normalization to {os.path.basename(input_path)}...")
+            # Load audio using torchaudio
+            waveform, sample_rate = torchaudio.load(input_path)
+            
+            # Move to GPU if available
+            waveform = waveform.to(DEVICE)
+            
+            # Calculate current RMS
+            rms = torch.sqrt(torch.mean(waveform ** 2))
+            current_dbfs = 20 * torch.log10(rms)
+            
+            # Calculate gain needed
+            gain_db = target_dbfs - current_dbfs
+            gain_linear = 10 ** (gain_db / 20)
+            
+            # Apply gain
+            normalized_waveform = waveform * gain_linear
+            
+            # Move back to CPU for saving
+            normalized_waveform = normalized_waveform.cpu()
+            
+            # Save using torchaudio
+            torchaudio.save(output_path, normalized_waveform, sample_rate)
+            logger.info(f"GPU-accelerated normalization complete. Saved to: {os.path.basename(output_path)}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during GPU normalization: {e}")
+            logger.info("Falling back to CPU-based normalization...")
+    
+    # Fallback to CPU-based normalization
     if not AudioSegment:
-        print(f"Skipping normalization for {os.path.basename(input_path)} as 'pydub' library is not available.")
+        logger.warning(f"Skipping normalization for {os.path.basename(input_path)} as 'pydub' library is not available.")
         return False
+    
     try:
-        print(f"Normalizing {os.path.basename(input_path)} to {target_dbfs} dBFS...")
-        sound = AudioSegment.from_file(input_path) # pydub usually auto-detects format
+        logger.info(f"Normalizing {os.path.basename(input_path)} to {target_dbfs} dBFS...")
+        sound = AudioSegment.from_file(input_path)
         
         change_in_dbfs = target_dbfs - sound.dBFS
         normalized_sound = sound.apply_gain(change_in_dbfs)
         
         normalized_sound.export(output_path, format="wav")
-        print(f"Normalization complete. Saved to: {os.path.basename(output_path)}")
+        logger.info(f"Normalization complete. Saved to: {os.path.basename(output_path)}")
         return True
     except CouldntEncodeError:
-        print(f"Error: Could not export normalized audio for {os.path.basename(input_path)}. "
+        logger.error(f"Error: Could not export normalized audio for {os.path.basename(input_path)}. "
               "Ensure ffmpeg or libav is installed and in your system's PATH.")
         return False
     except Exception as e:
-        print(f"Error during normalization for {os.path.basename(input_path)}: {e}")
+        logger.error(f"Error during normalization for {os.path.basename(input_path)}: {e}")
         return False
 
 def process_wav_files_in_directory(directory_path, hf_token, args):
@@ -95,45 +215,58 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
     with optional pre-processing and timestamp-based sorting,
     then concatenates the resulting .txt files.
     """
+    logger.info("\n=== Starting Audio Processing Pipeline ===")
+    force_flush()
+    logger.info(f"Processing directory: {os.path.abspath(directory_path)}")
+    force_flush()
+    logger.info(f"Using device: {args.device}")
+    force_flush()
+    logger.info(f"Using compute type: {args.compute_type}")
+    force_flush()
+    logger.info(f"Noise reduction: {'Enabled' if args.enable_noise_reduction else 'Disabled'}")
+    force_flush()
+    logger.info(f"Normalization: {'Enabled' if args.enable_normalization else 'Disabled'}")
+    force_flush()
+    if args.enable_normalization:
+        logger.info(f"Normalization target dBFS: {args.normalization_target_dbfs}")
+        force_flush()
+
     if args.DEBUG:
         debug_print("DEBUG mode enabled.", args.DEBUG)
 
     if not os.path.isdir(directory_path):
-        print(f"Error: Directory not found: {directory_path}")
+        logger.error(f"Error: Directory not found: {directory_path}")
         return
 
     if not hf_token:
-        print("Error: Hugging Face token (HFTOKEN) not provided or found.")
+        logger.error("Error: Hugging Face token (HFTOKEN) not provided or found.")
         return
 
     if not shutil.which("whisperx"):
-        print("Error: whisperx command not found. Please ensure it is installed and")
-        print("that you have activated the correct Python environment.")
+        logger.error("Error: whisperx command not found. Please ensure it is installed and")
+        logger.error("that you have activated the correct Python environment.")
         return
 
-    debug_print(f"Processing directory: {os.path.abspath(directory_path)}", args.DEBUG)
-    if args.DEBUG:
-        debug_print(f"DEBUG: Absolute directory path: {os.path.abspath(directory_path)}", args.DEBUG)
-
     # --- File discovery and sorting based on timestamp ---
+    logger.info("\n=== Scanning for WAV Files ===")
     initial_wav_files = []
     for ext in ("*.WAV", "*.wav"):
         initial_wav_files.extend(glob.glob(os.path.join(directory_path, ext)))
 
     if not initial_wav_files:
-        print(f"No .WAV or .wav files found in {directory_path}")
+        logger.warning(f"No .WAV or .wav files found in {directory_path}")
         return
     
-    if args.DEBUG:
-        debug_print(f"DEBUG: Found {len(initial_wav_files)} initial WAV files.", args.DEBUG)
+    logger.info(f"Found {len(initial_wav_files)} WAV files")
+    for wav_file in initial_wav_files:
+        logger.info(f"  - {os.path.basename(wav_file)}")
 
     files_to_process_info = []
     if args.filename_timestamp_format and args.filename_timestamp_regex:
-        debug_print(f"Attempting to sort WAV files by timestamp using format '{args.filename_timestamp_format}' and regex '{args.filename_timestamp_regex}'...", args.DEBUG)
-        if args.DEBUG:
-            debug_print(f"DEBUG: Timestamp format: {args.filename_timestamp_format}", args.DEBUG)
-            debug_print(f"DEBUG: Timestamp regex: {args.filename_timestamp_regex}", args.DEBUG)
-            
+        logger.info("\n=== Sorting Files by Timestamp ===")
+        logger.info(f"Using timestamp format: {args.filename_timestamp_format}")
+        logger.info(f"Using regex pattern: {args.filename_timestamp_regex}")
+        
         sortable_files = []
         unsortable_files = []
 
@@ -143,45 +276,42 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                 match = re.search(args.filename_timestamp_regex, filename)
                 if match and match.group(1):
                     timestamp_str = match.group(1)
-                    if args.DEBUG: debug_print(f"DEBUG: File '{filename}', extracted timestamp_str: '{timestamp_str}'", args.DEBUG)
                     dt_obj = datetime.strptime(timestamp_str, args.filename_timestamp_format)
                     sortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
+                    logger.info(f"  ✓ Sorted: {filename} -> {dt_obj}")
                 else:
-                    debug_print(f"Warning: Timestamp pattern not found or regex group 1 empty in '{filename}'. Will process later.", args.DEBUG)
-                    if args.DEBUG: debug_print(f"DEBUG: No match or empty group 1 for '{filename}' with regex '{args.filename_timestamp_regex}'", args.DEBUG)
+                    logger.warning(f"  ⚠ No timestamp found in: {filename}")
                     unsortable_files.append({'path': wav_path, 'original_filename': filename})
             except ValueError as ve:
-                debug_print(f"Warning: Could not parse timestamp from '{filename}' (extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}', attempted format: '{args.filename_timestamp_format}'). Error: {ve}. Will process later.", args.DEBUG)
-                if args.DEBUG: debug_print(f"DEBUG: ValueError for '{filename}'. Extracted: '{timestamp_str if 'timestamp_str' in locals() and match and match.group(1) else 'N/A'}'. Format: '{args.filename_timestamp_format}'. Error: {ve}", args.DEBUG)
+                logger.warning(f"  ⚠ Could not parse timestamp in: {filename} - {ve}")
                 unsortable_files.append({'path': wav_path, 'original_filename': filename})
             except Exception as e_parse:
-                debug_print(f"Warning: Error parsing timestamp for '{filename}': {e_parse}. Will process later.", args.DEBUG)
-                if args.DEBUG: debug_print(f"DEBUG: Generic parsing error for '{filename}': {e_parse}", args.DEBUG)
+                logger.warning(f"  ⚠ Error processing: {filename} - {e_parse}")
                 unsortable_files.append({'path': wav_path, 'original_filename': filename})
         
         sortable_files.sort(key=lambda x: x['datetime'])
-        files_to_process_info = sortable_files + unsortable_files 
-        if args.DEBUG:
-            debug_print(f"DEBUG: {len(sortable_files)} sortable files, {len(unsortable_files)} unsortable files.", args.DEBUG)
+        files_to_process_info = sortable_files + unsortable_files
+        logger.info(f"\nSorted {len(sortable_files)} files by timestamp")
+        logger.info(f"Found {len(unsortable_files)} files without valid timestamps")
     else:
-        debug_print("INFO: Timestamp sorting not enabled (format or regex not provided). Processing files in default glob order.", args.DEBUG)
+        logger.info("\n=== Processing Files in Default Order ===")
         for wav_path in initial_wav_files:
-             files_to_process_info.append({'path': wav_path, 'original_filename': os.path.basename(wav_path)})
-    
-    debug_print("\nOrder of processing WAV files:", args.DEBUG)
-    for i, file_info in enumerate(files_to_process_info):
-        debug_print(f"{i+1}. {file_info['original_filename']}", args.DEBUG)
-    debug_print("-" * 30, args.DEBUG)
+            files_to_process_info.append({'path': wav_path, 'original_filename': os.path.basename(wav_path)})
 
     # Always concatenate WAV files
-    debug_print("\nConcatenating WAV files...", args.DEBUG)
+    logger.info("\n=== Concatenating WAV Files ===")
     wav_paths = [file_info['path'] for file_info in files_to_process_info]
     concatenated_output = os.path.join(directory_path, f"{os.path.basename(directory_path)}_concatenated.wav")
+    logger.info(f"Creating concatenated file: {os.path.basename(concatenated_output)}")
     concatenated_files = concatenate_wav_files(wav_paths, concatenated_output, args.max_chunk_size, args.DEBUG)
     
     if not concatenated_files:
-        print("Error: WAV concatenation failed or produced no output files.")
+        logger.error("Error: WAV concatenation failed or produced no output files.")
         return
+    
+    logger.info(f"Created {len(concatenated_files)} concatenated chunks")
+    for chunk in concatenated_files:
+        logger.info(f"  - {os.path.basename(chunk)}")
     
     # Update files_to_process_info with concatenated files
     files_to_process_info = []
@@ -190,8 +320,6 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
             'path': concat_file,
             'original_filename': os.path.basename(concat_file)
         })
-    
-    debug_print(f"Created {len(concatenated_files)} concatenated WAV chunks.", args.DEBUG)
 
     generated_txt_files = []
 
@@ -202,43 +330,51 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
         
         current_audio_path = wav_file_path
         
-        debug_print(f"\n--- Processing: {original_wav_filename} ---", args.DEBUG)
+        logger.info(f"\n=== Processing: {original_wav_filename} ===")
         if args.DEBUG: debug_print(f"DEBUG: Starting processing for {original_wav_filename}, original path: {wav_file_path}", args.DEBUG)
 
         with tempfile.TemporaryDirectory(prefix=f"{original_base_name_no_ext}_processed_", dir=directory_path) as temp_proc_dir:
-            if args.DEBUG: debug_print(f"DEBUG: Created temporary processing directory: {temp_proc_dir}", args.DEBUG)
+            logger.info(f"Created temporary processing directory: {temp_proc_dir}")
+            
             if args.enable_noise_reduction:
                 if not noisereduce or not sf:
-                    debug_print(f"INFO: Skipping noise reduction for {original_wav_filename} due to missing libraries.", args.DEBUG)
+                    logger.warning(f"Skipping noise reduction for {original_wav_filename} due to missing libraries.")
                 else:
                     temp_nr_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_nr.wav")
-                    if args.DEBUG: debug_print(f"DEBUG: Attempting noise reduction. Input: {current_audio_path}, Output: {temp_nr_path}", args.DEBUG)
+                    logger.info(f"Applying noise reduction: {os.path.basename(current_audio_path)} -> {os.path.basename(temp_nr_path)}")
                     if apply_noise_reduction(current_audio_path, temp_nr_path):
                         current_audio_path = temp_nr_path
+                        logger.info("✓ Noise reduction completed successfully")
+                    else:
+                        logger.warning("⚠ Noise reduction failed, using original audio")
             else:
-                debug_print(f"INFO: Noise reduction disabled by user for {original_wav_filename}.", args.DEBUG)
+                logger.info("Noise reduction disabled by user")
 
             if args.enable_normalization:
                 if not AudioSegment:
-                     debug_print(f"INFO: Skipping normalization for {original_wav_filename} due to missing pydub or ffmpeg/libav.", args.DEBUG)
+                    logger.warning(f"Skipping normalization for {original_wav_filename} due to missing pydub or ffmpeg/libav.")
                 else:
                     temp_norm_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_norm.wav")
-                    if args.DEBUG: debug_print(f"DEBUG: Attempting normalization. Input: {current_audio_path}, Output: {temp_norm_path}, Target dBFS: {args.normalization_target_dbfs}", args.DEBUG)
+                    logger.info(f"Applying normalization: {os.path.basename(current_audio_path)} -> {os.path.basename(temp_norm_path)}")
                     if apply_normalization(current_audio_path, temp_norm_path, args.normalization_target_dbfs):
                         current_audio_path = temp_norm_path
+                        logger.info("✓ Normalization completed successfully")
+                    else:
+                        logger.warning("⚠ Normalization failed, using previous audio")
             else:
-                debug_print(f"INFO: Normalization disabled by user for {original_wav_filename}.", args.DEBUG)
+                logger.info("Normalization disabled by user")
             
-            debug_print(f"Running WhisperX on: {os.path.basename(current_audio_path)} (derived from {original_wav_filename})...", args.DEBUG)
+            logger.info(f"\n=== Running WhisperX Transcription ===")
+            logger.info(f"Input file: {os.path.basename(current_audio_path)}")
             command = [
                 "whisperx", current_audio_path,
                 "--model", "large-v3", "--diarize", "--language", "en",
                 "--highlight_words", "True", "--hf_token", hf_token,
                 "--output_dir", directory_path, 
-                "--vad_onset", str(args.vad_onset), "--vad_offset", str(args.vad_offset)
+                "--vad_onset", str(args.vad_onset), "--vad_offset", str(args.vad_offset),
+                "--device", args.device,
+                "--compute_type", args.compute_type
             ]
-            if args.compute_type:
-                command.extend(["--compute_type", args.compute_type])
             
             if args.DEBUG: debug_print(f"DEBUG: WhisperX command: {' '.join(command)}", args.DEBUG)
 
@@ -247,77 +383,62 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                 process_env["HFTOKEN"] = hf_token 
                 result = subprocess.run(command, capture_output=True, text=True, env=process_env, check=False)
 
-                if args.DEBUG:
-                    debug_print(f"DEBUG: WhisperX process completed. Return code: {result.returncode}", args.DEBUG)
-                    if result.stdout: debug_print(f"DEBUG: WhisperX Stdout:\n{result.stdout}", args.DEBUG)
-                    if result.stderr: debug_print(f"DEBUG: WhisperX Stderr:\n{result.stderr}", args.DEBUG)
-
                 if result.returncode == 0:
-                    debug_print(f"WhisperX completed for {original_wav_filename}.", args.DEBUG)
+                    logger.info("✓ WhisperX transcription completed successfully")
                     
                     whisperx_input_basename_for_txt = os.path.splitext(os.path.basename(current_audio_path))[0]
                     actual_txt_generated_by_whisperx = os.path.join(directory_path, f"{whisperx_input_basename_for_txt}.txt")
                     target_final_txt_path = os.path.join(directory_path, f"{original_base_name_no_ext}.txt")
-                    if args.DEBUG:
-                        debug_print(f"DEBUG: WhisperX input basename for TXT: {whisperx_input_basename_for_txt}", args.DEBUG)
-                        debug_print(f"DEBUG: Actual TXT generated by WhisperX (expected): {actual_txt_generated_by_whisperx}", args.DEBUG)
-                        debug_print(f"DEBUG: Target final TXT path: {target_final_txt_path}", args.DEBUG)
-
+                    
                     if os.path.exists(actual_txt_generated_by_whisperx):
                         if actual_txt_generated_by_whisperx != target_final_txt_path:
                             try:
                                 if os.path.exists(target_final_txt_path):
-                                    debug_print(f"Warning: Target file {os.path.basename(target_final_txt_path)} already exists. Overwriting.", args.DEBUG)
-                                    if args.DEBUG: debug_print(f"DEBUG: Overwriting existing target file: {target_final_txt_path}", args.DEBUG)
+                                    logger.warning(f"Target file {os.path.basename(target_final_txt_path)} already exists. Overwriting.")
                                     os.remove(target_final_txt_path)
                                 shutil.move(actual_txt_generated_by_whisperx, target_final_txt_path)
-                                debug_print(f"Renamed WhisperX output {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}", args.DEBUG)
-                                if args.DEBUG: debug_print(f"DEBUG: Successfully renamed {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}", args.DEBUG)
+                                logger.info(f"Renamed output: {os.path.basename(actual_txt_generated_by_whisperx)} -> {os.path.basename(target_final_txt_path)}")
                             except Exception as e_rename:
-                                debug_print(f"Error renaming {os.path.basename(actual_txt_generated_by_whisperx)} to {os.path.basename(target_final_txt_path)}: {e_rename}. Using original WhisperX output name.", args.DEBUG)
-                                if args.DEBUG: debug_print(f"DEBUG: Renaming failed. Error: {e_rename}", args.DEBUG)
-                                target_final_txt_path = actual_txt_generated_by_whisperx 
+                                logger.error(f"Error renaming output file: {e_rename}")
+                                target_final_txt_path = actual_txt_generated_by_whisperx
                         
                         generated_txt_files.append(target_final_txt_path)
-                        debug_print(f"Successfully processed and prepared transcription: {os.path.basename(target_final_txt_path)}", args.DEBUG)
+                        logger.info(f"✓ Transcription saved: {os.path.basename(target_final_txt_path)}")
                     else:
-                        debug_print(f"Warning: WhisperX reported success, but expected output file {os.path.basename(actual_txt_generated_by_whisperx)} not found.", args.DEBUG)
+                        logger.error(f"Expected output file not found: {os.path.basename(actual_txt_generated_by_whisperx)}")
                 else:
-                    debug_print(f"Error processing {original_wav_filename} with WhisperX:", args.DEBUG)
-                    if not args.DEBUG: # If not in debug, print stdout/stderr here for errors
-                        if result.stdout: debug_print(f"WhisperX Stdout:\n{result.stdout}", args.DEBUG)
-                        if result.stderr: debug_print(f"WhisperX Stderr:\n{result.stderr}", args.DEBUG)
+                    logger.error(f"WhisperX transcription failed with return code {result.returncode}")
+                    if result.stdout: logger.error(f"WhisperX Stdout:\n{result.stdout}")
+                    if result.stderr: logger.error(f"WhisperX Stderr:\n{result.stderr}")
             except Exception as e:
-                debug_print(f"An unexpected error occurred while running WhisperX for {original_wav_filename}: {e}", args.DEBUG)
-                if args.DEBUG: debug_print(f"DEBUG: Exception during WhisperX subprocess run: {e}", args.DEBUG)
-            
-            if args.DEBUG: debug_print(f"DEBUG: Exiting temporary directory context for {original_wav_filename}. Temp dir {temp_proc_dir} will be cleaned up.", args.DEBUG)
+                logger.error(f"Unexpected error during WhisperX processing: {e}")
 
     if not generated_txt_files:
-        debug_print("\nNo .txt files were generated by WhisperX. Skipping concatenation.", args.DEBUG)
+        logger.error("\nNo transcription files were generated. Processing failed.")
         return
 
+    logger.info("\n=== Concatenating Transcription Files ===")
     abs_directory_path = os.path.abspath(directory_path)
     directory_basename = os.path.basename(abs_directory_path)
     concatenated_file_name = os.path.join(abs_directory_path, f"{directory_basename}_transcription_summary.txt")
-
-    debug_print(f"\nConcatenating {len(generated_txt_files)} .txt files into: {concatenated_file_name}", args.DEBUG)
-    if args.DEBUG: debug_print(f"DEBUG: Concatenating files: {generated_txt_files}", args.DEBUG)
+    
+    logger.info(f"Creating summary file: {os.path.basename(concatenated_file_name)}")
+    logger.info(f"Combining {len(generated_txt_files)} transcription files")
     
     with open(concatenated_file_name, "w", encoding="utf-8") as outfile:
-        for txt_file_path in generated_txt_files: 
+        for txt_file_path in generated_txt_files:
             try:
                 with open(txt_file_path, "r", encoding="utf-8") as infile:
                     base_txt_filename = os.path.basename(txt_file_path)
                     outfile.write(f"--- Content from: {base_txt_filename} ---\n\n")
                     outfile.write(infile.read())
                     outfile.write("\n\n" + "="*80 + "\n\n")
-                debug_print(f"Added content from {base_txt_filename}", args.DEBUG)
+                logger.info(f"✓ Added content from: {base_txt_filename}")
             except Exception as e:
-                debug_print(f"Error reading or writing {txt_file_path}: {e}", args.DEBUG)
+                logger.error(f"Error processing {txt_file_path}: {e}")
     
-    debug_print("\nScript finished.", args.DEBUG)
-    debug_print(f"All relevant .txt files concatenated into {concatenated_file_name}", args.DEBUG)
+    logger.info("\n=== Processing Complete ===")
+    logger.info(f"All transcriptions combined into: {os.path.basename(concatenated_file_name)}")
 
 def run_ffmpeg_command(cmd, debug_mode=False):
     """
@@ -339,18 +460,18 @@ def run_ffmpeg_command(cmd, debug_mode=False):
             if output == '' and process.poll() is not None:
                 break
             if output:
-                print(output.strip())
+                logger.info(output.strip())
         
         # Get the return code
         return_code = process.poll()
         
         if return_code != 0:
-            print(f"Error: ffmpeg command failed with return code {return_code}")
+            logger.error(f"Error: ffmpeg command failed with return code {return_code}")
             return False
             
         return True
     except Exception as e:
-        print(f"Error running ffmpeg command: {e}")
+        logger.error(f"Error running ffmpeg command: {e}")
         return False
 
 def get_wav_settings(wav_file):
@@ -387,7 +508,7 @@ def get_wav_settings(wav_file):
             str(stream.get('bit_rate', '192000'))     # Default to 192kbit
         )
     except Exception as e:
-        print(f"Warning: Could not get WAV settings from {wav_file}, using defaults: {e}")
+        logger.warning(f"Warning: Could not get WAV settings from {wav_file}, using defaults: {e}")
         return ('24000', '2', 'pcm_s16le', '192000')  # Default values: 24kHz, stereo, 192kbit
 
 def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=False):
@@ -397,11 +518,11 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
     Returns a list of paths to the concatenated files.
     """
     if not AudioSegment:
-        print("Error: pydub library not available. Cannot concatenate WAV files.")
+        logger.error("Error: pydub library not available. Cannot concatenate WAV files.")
         return []
 
     if not wav_files:
-        print("Error: No WAV files provided for concatenation.")
+        logger.error("Error: No WAV files provided for concatenation.")
         return []
 
     debug_print(f"Starting WAV concatenation. Max chunk size: {max_size_gb}GB", debug_mode)
@@ -467,7 +588,7 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
                     os.remove(temp_wav)
                 
         except Exception as e:
-            print(f"Error processing {wav_file}: {e}")
+            logger.error(f"Error processing {wav_file}: {e}")
             continue
     
     # Save the last chunk if it exists
@@ -488,7 +609,7 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Batch process .WAV files with WhisperX. Sorts by filename timestamp if format/regex provided. Noise reduction and normalization are ON by default.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter # Shows default values in help
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("directory_path", help="Path to the directory containing .WAV files.")
     parser.add_argument("--hf_token", help="Hugging Face token. Can also be set via HFTOKEN environment variable.", default=os.environ.get("HFTOKEN"))
@@ -514,7 +635,10 @@ if __name__ == "__main__":
     whisperx_group = parser.add_argument_group('WhisperX Options')
     whisperx_group.add_argument("--vad-onset", type=float, default=0.5, help="WhisperX VAD onset threshold.")
     whisperx_group.add_argument("--vad-offset", type=float, default=0.363, help="WhisperX VAD offset threshold.")
-    whisperx_group.add_argument("--compute_type", type=str, default="float16", help="Compute type for WhisperX (e.g., float16, int8).")
+    whisperx_group.add_argument("--device", type=str, default=DEFAULT_DEVICE,
+                        help=f"Device to use for inference (e.g., cuda, cpu, mps). Defaults to {DEFAULT_DEVICE} on {platform.system()}.")
+    whisperx_group.add_argument("--compute_type", type=str, default=DEFAULT_COMPUTE_TYPE, 
+                        help=f"Compute type for WhisperX (e.g., auto, float16, float32, int8). Defaults to {DEFAULT_COMPUTE_TYPE} on {platform.system()}.")
 
     # WAV concatenation arguments
     concat_group = parser.add_argument_group('WAV Concatenation Options')
@@ -522,15 +646,17 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.DEBUG:
-        debug_print("--- Parsed Arguments ---", args.DEBUG)
-        for arg, value in vars(args).items():
-            debug_print(f"{arg}: {value}", args.DEBUG)
-        debug_print("------------------------", args.DEBUG)
+    # Update logger with debug mode from args
+    logger = setup_logging('transcribe', args.DEBUG)
 
+    if args.DEBUG:
+        logger.debug("--- Parsed Arguments ---")
+        for arg, value in vars(args).items():
+            logger.debug(f"{arg}: {value}")
+        logger.debug("------------------------")
 
     if not args.hf_token:
-        print("Error: Hugging Face token not found. Set HFTOKEN env var or use --hf_token.")
+        logger.error("Error: Hugging Face token not found. Set HFTOKEN env var or use --hf_token.")
         sys.exit(1)
     
     # --- How to use this script ---
