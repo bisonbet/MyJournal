@@ -462,10 +462,12 @@ def create_interface(journal_viewer):
                         return "No directory selected", None
                         
                     try:
-                        print(f"Running diarize-audio.py with path: {current_path}")
-                        # Run diarize-audio.py with the current path
+                        # Convert relative path to full path
+                        full_path = str(self.root_dir / current_path)
+                        print(f"Running diarize-audio.py with path: {full_path}")
+                        # Run diarize-audio.py with the full path
                         result = subprocess.run(
-                            [sys.executable, "diarize-audio.py", current_path],
+                            [sys.executable, "diarize-audio.py", full_path],
                             capture_output=True,
                             text=True,
                             check=True
