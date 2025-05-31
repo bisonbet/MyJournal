@@ -7,7 +7,7 @@ import shutil
 import glob # Added for finding WAV files
 
 # --- Configuration ---
-SCRIPT1_NAME = "transcribeTHIS.py.new"
+SCRIPT1_NAME = "transcribeTHIS.py"
 SCRIPT2_NAME = "summarizeTHIS.py"
 
 def check_script_exists(script_name):
