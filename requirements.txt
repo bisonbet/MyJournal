@@ -1,5 +1,5 @@
 gradio>=5.0.0
-markdown>=3.4.0
+markdown>=3.5.0
 whisperx>=3.1.0
 torch>=2.0.0
 torchaudio>=2.0.0
@@ -10,4 +10,5 @@ noisereduce>=2.0.1
 pydub>=0.25.1
 requests>=2.31.0
 tiktoken>=0.5.0
-ffmpeg-python>=0.2.0 
+ffmpeg-python>=0.2.0
+weasyprint>=60.1 

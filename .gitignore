@@ -178,3 +178,4 @@ cython_debug/
 journals/
 !journals/README.md
 !journals/create_dirs.py
+.DS_Store
