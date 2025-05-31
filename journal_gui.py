@@ -462,6 +462,7 @@ def create_interface(journal_viewer):
                         return "No directory selected", None
                         
                     try:
+                        print(f"Running diarize-audio.py with path: {current_path}")
                         # Run diarize-audio.py with the current path
                         result = subprocess.run(
                             [sys.executable, "diarize-audio.py", current_path],
@@ -469,9 +470,18 @@ def create_interface(journal_viewer):
                             text=True,
                             check=True
                         )
+                        print(f"Script output: {result.stdout}")
+                        if result.stderr:
+                            print(f"Script errors: {result.stderr}")
                         return f"Summary generated successfully:\n{result.stdout}", None
                     except subprocess.CalledProcessError as e:
-                        return f"Error generating summary: {e.stderr}", None
+                        error_msg = f"Error generating summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
+                        print(error_msg)
+                        return error_msg, None
+                    except Exception as e:
+                        error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
+                        print(error_msg)
+                        return error_msg, None
                         
                 elif script_name == "Word Cloud Analysis":
                     return "Word cloud analysis will be implemented", None
