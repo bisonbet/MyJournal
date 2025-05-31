@@ -458,17 +458,15 @@ def create_interface(journal_viewer):
                         return result, None
                         
                 elif script_name == "Generate Summary":
-                    if not file1:
-                        return "Please select a file first", None
+                    # Get the current path from the current_path textbox
+                    current_path = current_path.value
+                    if not current_path:
+                        return "No directory selected", None
                         
-                    # Get the directory path from the file path
-                    file_path = Path(file1)
-                    dir_path = str(file_path.parent)
-                    
                     try:
-                        # Run diarize-audio.py with the directory path
+                        # Run diarize-audio.py with the current path
                         result = subprocess.run(
-                            [sys.executable, "diarize-audio.py", dir_path],
+                            [sys.executable, "diarize-audio.py", current_path],
                             capture_output=True,
                             text=True,
                             check=True
