@@ -463,7 +463,7 @@ def create_interface(journal_viewer):
                         
                     try:
                         # Convert relative path to full path
-                        full_path = str(self.root_dir / current_path)
+                        full_path = str(journal_viewer.root_dir / current_path)
                         print(f"Running diarize-audio.py with path: {full_path}")
                         # Run diarize-audio.py with the full path
                         result = subprocess.run(
