@@ -41,7 +41,7 @@ def debug_print(message, debug_mode=False):
 # Determine default device and compute type based on OS
 if platform.system() == "Darwin":
     DEFAULT_DEVICE = "mps"
-    DEFAULT_COMPUTE_TYPE = "auto"  # Let ctranslate2 choose the best compute type for MPS
+    DEFAULT_COMPUTE_TYPE = "float32"  # Changed from 'auto' to 'float32' for macOS
 else:
     DEFAULT_DEVICE = "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"
     DEFAULT_COMPUTE_TYPE = "float16"
@@ -81,6 +81,7 @@ except ImportError:
 def apply_noise_reduction(input_path, output_path):
     """
     Applies noise reduction to an audio file using GPU acceleration if available.
+    Processes large files in chunks to avoid memory issues.
     """
     if TORCH_AVAILABLE:
         try:
@@ -88,34 +89,83 @@ def apply_noise_reduction(input_path, output_path):
             # Load audio using torchaudio
             waveform, sample_rate = torchaudio.load(input_path)
             
-            # Move to GPU if available
-            waveform = waveform.to(DEVICE)
+            # Check if file is too large for GPU memory
+            total_samples = waveform.shape[-1]
+            chunk_size = 30 * sample_rate  # 30 seconds per chunk
+            num_chunks = (total_samples + chunk_size - 1) // chunk_size
             
-            # Convert to mono if stereo
-            if waveform.shape[0] > 1:
-                logger.info("INFO: Audio is stereo, averaging channels to mono for noise reduction.")
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
-            
-            # Apply noise reduction using spectral gating
-            # Convert to frequency domain
-            stft = torch.stft(waveform, n_fft=2048, hop_length=512, return_complex=True)
-            magnitude = torch.abs(stft)
-            phase = torch.angle(stft)
-            
-            # Estimate noise floor
-            noise_floor = torch.mean(magnitude, dim=-1, keepdim=True)
-            threshold = noise_floor * 1.5
-            
-            # Apply spectral gating
-            mask = (magnitude > threshold).float()
-            magnitude_filtered = magnitude * mask
-            
-            # Convert back to time domain
-            stft_filtered = magnitude_filtered * torch.exp(1j * phase)
-            waveform_filtered = torch.istft(stft_filtered, n_fft=2048, hop_length=512, length=waveform.shape[-1])
-            
-            # Move back to CPU for saving
-            waveform_filtered = waveform_filtered.cpu()
+            if num_chunks > 1:
+                logger.info(f"File is large ({total_samples/sample_rate:.1f} seconds). Processing in {num_chunks} chunks...")
+                
+                # Process in chunks
+                processed_chunks = []
+                for i in range(num_chunks):
+                    start = i * chunk_size
+                    end = min((i + 1) * chunk_size, total_samples)
+                    logger.info(f"Processing chunk {i+1}/{num_chunks} ({start/sample_rate:.1f}s - {end/sample_rate:.1f}s)...")
+                    
+                    # Extract chunk
+                    chunk = waveform[:, start:end].to(DEVICE)
+                    
+                    # Convert to mono if stereo
+                    if chunk.shape[0] > 1:
+                        chunk = torch.mean(chunk, dim=0, keepdim=True)
+                    
+                    # Apply noise reduction using spectral gating
+                    stft = torch.stft(chunk, n_fft=2048, hop_length=512, return_complex=True)
+                    magnitude = torch.abs(stft)
+                    phase = torch.angle(stft)
+                    
+                    # Estimate noise floor
+                    noise_floor = torch.mean(magnitude, dim=-1, keepdim=True)
+                    threshold = noise_floor * 1.5
+                    
+                    # Apply spectral gating
+                    mask = (magnitude > threshold).float()
+                    magnitude_filtered = magnitude * mask
+                    
+                    # Convert back to time domain
+                    stft_filtered = magnitude_filtered * torch.exp(1j * phase)
+                    chunk_filtered = torch.istft(stft_filtered, n_fft=2048, hop_length=512, length=chunk.shape[-1])
+                    
+                    # Move back to CPU and store
+                    processed_chunks.append(chunk_filtered.cpu())
+                    
+                    # Clear GPU memory
+                    del chunk, stft, magnitude, phase, stft_filtered, chunk_filtered
+                    torch.cuda.empty_cache() if DEVICE.type == 'cuda' else None
+                
+                # Concatenate processed chunks
+                waveform_filtered = torch.cat(processed_chunks, dim=-1)
+                
+            else:
+                # Process entire file at once
+                waveform = waveform.to(DEVICE)
+                
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    logger.info("INFO: Audio is stereo, averaging channels to mono for noise reduction.")
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                
+                # Apply noise reduction using spectral gating
+                stft = torch.stft(waveform, n_fft=2048, hop_length=512, return_complex=True)
+                magnitude = torch.abs(stft)
+                phase = torch.angle(stft)
+                
+                # Estimate noise floor
+                noise_floor = torch.mean(magnitude, dim=-1, keepdim=True)
+                threshold = noise_floor * 1.5
+                
+                # Apply spectral gating
+                mask = (magnitude > threshold).float()
+                magnitude_filtered = magnitude * mask
+                
+                # Convert back to time domain
+                stft_filtered = magnitude_filtered * torch.exp(1j * phase)
+                waveform_filtered = torch.istft(stft_filtered, n_fft=2048, hop_length=512, length=waveform.shape[-1])
+                
+                # Move back to CPU
+                waveform_filtered = waveform_filtered.cpu()
             
             # Save using torchaudio
             torchaudio.save(output_path, waveform_filtered, sample_rate)
