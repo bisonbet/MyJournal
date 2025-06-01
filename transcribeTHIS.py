@@ -363,34 +363,25 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
     for chunk in concatenated_files:
         logger.info(f"  - {os.path.basename(chunk)}")
     
-    # Update files_to_process_info with concatenated files
-    files_to_process_info = []
-    for i, concat_file in enumerate(concatenated_files):
-        files_to_process_info.append({
-            'path': concat_file,
-            'original_filename': os.path.basename(concat_file)
-        })
-
+    # Process each concatenated chunk
     generated_txt_files = []
-
-    for file_info in files_to_process_info:
-        wav_file_path = file_info['path']
-        original_wav_filename = file_info['original_filename'] 
-        original_base_name_no_ext = os.path.splitext(original_wav_filename)[0]
+    for chunk_file in concatenated_files:
+        chunk_filename = os.path.basename(chunk_file)
+        chunk_base_name_no_ext = os.path.splitext(chunk_filename)[0]
         
-        current_audio_path = wav_file_path
+        current_audio_path = chunk_file
         
-        logger.info(f"\n=== Processing: {original_wav_filename} ===")
-        if args.DEBUG: debug_print(f"DEBUG: Starting processing for {original_wav_filename}, original path: {wav_file_path}", args.DEBUG)
+        logger.info(f"\n=== Processing: {chunk_filename} ===")
+        if args.DEBUG: debug_print(f"DEBUG: Starting processing for {chunk_filename}, path: {chunk_file}", args.DEBUG)
 
-        with tempfile.TemporaryDirectory(prefix=f"{original_base_name_no_ext}_processed_", dir=directory_path) as temp_proc_dir:
+        with tempfile.TemporaryDirectory(prefix=f"{chunk_base_name_no_ext}_processed_", dir=directory_path) as temp_proc_dir:
             logger.info(f"Created temporary processing directory: {temp_proc_dir}")
             
             if args.enable_noise_reduction:
                 if not noisereduce or not sf:
-                    logger.warning(f"Skipping noise reduction for {original_wav_filename} due to missing libraries.")
+                    logger.warning(f"Skipping noise reduction for {chunk_filename} due to missing libraries.")
                 else:
-                    temp_nr_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_nr.wav")
+                    temp_nr_path = os.path.join(temp_proc_dir, f"{chunk_base_name_no_ext}_nr.wav")
                     logger.info(f"Applying noise reduction: {os.path.basename(current_audio_path)} -> {os.path.basename(temp_nr_path)}")
                     if apply_noise_reduction(current_audio_path, temp_nr_path):
                         current_audio_path = temp_nr_path
@@ -402,9 +393,9 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
 
             if args.enable_normalization:
                 if not AudioSegment:
-                    logger.warning(f"Skipping normalization for {original_wav_filename} due to missing pydub or ffmpeg/libav.")
+                    logger.warning(f"Skipping normalization for {chunk_filename} due to missing pydub or ffmpeg/libav.")
                 else:
-                    temp_norm_path = os.path.join(temp_proc_dir, f"{original_base_name_no_ext}_norm.wav")
+                    temp_norm_path = os.path.join(temp_proc_dir, f"{chunk_base_name_no_ext}_norm.wav")
                     logger.info(f"Applying normalization: {os.path.basename(current_audio_path)} -> {os.path.basename(temp_norm_path)}")
                     if apply_normalization(current_audio_path, temp_norm_path, args.normalization_target_dbfs):
                         current_audio_path = temp_norm_path
@@ -438,7 +429,7 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                     
                     whisperx_input_basename_for_txt = os.path.splitext(os.path.basename(current_audio_path))[0]
                     actual_txt_generated_by_whisperx = os.path.join(directory_path, f"{whisperx_input_basename_for_txt}.txt")
-                    target_final_txt_path = os.path.join(directory_path, f"{original_base_name_no_ext}.txt")
+                    target_final_txt_path = os.path.join(directory_path, f"{chunk_base_name_no_ext}.txt")
                     
                     if os.path.exists(actual_txt_generated_by_whisperx):
                         if actual_txt_generated_by_whisperx != target_final_txt_path:
@@ -564,7 +555,7 @@ def get_wav_settings(wav_file):
 def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=False):
     """
     Concatenates WAV files into chunks that don't exceed max_size_gb.
-    Uses original WAV file settings for output, or defaults to 24kHz stereo 192kbit.
+    Preserves original WAV format if all files have the same format.
     Returns a list of paths to the concatenated files.
     """
     if not AudioSegment:
@@ -578,8 +569,59 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
     debug_print(f"Starting WAV concatenation. Max chunk size: {max_size_gb}GB", debug_mode)
     max_size_bytes = max_size_gb * 1024 * 1024 * 1024  # Convert GB to bytes
     
-    # Get settings from the first WAV file
-    sample_rate, channels, codec, bitrate = get_wav_settings(wav_files[0])
+    # Check if all files have the same format
+    all_formats = []
+    for wav_file in wav_files:
+        try:
+            cmd = [
+                "ffprobe", 
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=sample_rate,channels,codec_name,bit_rate",
+                "-of", "json",
+                wav_file
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            info = json.loads(result.stdout)
+            stream = info['streams'][0]
+            format_info = {
+                'sample_rate': stream.get('sample_rate'),
+                'channels': stream.get('channels'),
+                'codec': stream.get('codec_name'),
+                'bit_rate': stream.get('bit_rate')
+            }
+            all_formats.append(format_info)
+        except Exception as e:
+            logger.warning(f"Warning: Could not get format info for {wav_file}: {e}")
+            all_formats.append(None)
+    
+    # Check if all files have the same format
+    same_format = all(all_formats) and all(f == all_formats[0] for f in all_formats)
+    
+    if same_format:
+        logger.info("All WAV files have the same format. Preserving original format for concatenation.")
+        format_info = all_formats[0]
+        sample_rate = str(format_info['sample_rate'])
+        channels = str(format_info['channels'])
+        codec = format_info['codec']
+        bitrate = str(format_info['bit_rate'])
+    else:
+        logger.info("WAV files have different formats. Using standard format for concatenation.")
+        # Get settings from the first WAV file that we can read
+        for format_info in all_formats:
+            if format_info:
+                sample_rate = str(format_info['sample_rate'])
+                channels = str(format_info['channels'])
+                codec = format_info['codec']
+                bitrate = str(format_info['bit_rate'])
+                break
+        else:
+            # Default values if we couldn't read any file
+            sample_rate = '24000'
+            channels = '2'
+            codec = 'pcm_s16le'
+            bitrate = '192000'
+    
     debug_print(f"Using audio settings: {sample_rate}Hz, {channels} channels, {codec}, {int(bitrate)/1000}kbit", debug_mode)
     
     concatenated_files = []
@@ -590,52 +632,91 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
     for wav_file in wav_files:
         try:
             debug_print(f"Processing {os.path.basename(wav_file)}", debug_mode)
-            # Use ffmpeg directly to read the file
-            temp_wav = os.path.join(os.path.dirname(wav_file), f"temp_{os.path.basename(wav_file)}")
-            try:
-                # First convert to standard WAV format
-                convert_cmd = [
-                    "ffmpeg", "-y",
-                    "-i", wav_file,
-                    "-acodec", "pcm_s16le",
-                    "-ar", sample_rate,
-                    "-ac", channels,
-                    temp_wav
-                ]
-                if not run_ffmpeg_command(convert_cmd, debug_mode):
-                    raise Exception("Failed to convert WAV file")
-                
-                # Now load the converted file
-                audio = AudioSegment.from_wav(temp_wav)
+            
+            # If formats are the same, we can use ffmpeg directly for concatenation
+            if same_format:
+                # Create a temporary file list for ffmpeg
+                temp_list = os.path.join(os.path.dirname(wav_file), "temp_file_list.txt")
+                with open(temp_list, "w") as f:
+                    f.write(f"file '{os.path.abspath(wav_file)}'\n")
                 
                 # If this is the first file or adding this file would exceed max size
-                if current_chunk is None or (current_chunk_size + len(audio.raw_data) > max_size_bytes):
+                if current_chunk is None or (current_chunk_size + os.path.getsize(wav_file) > max_size_bytes):
                     # Save previous chunk if it exists
                     if current_chunk is not None:
                         chunk_path = os.path.join(os.path.dirname(output_path), 
                                                 f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
-                        # Export using detected or default settings
-                        current_chunk.export(chunk_path, 
-                                           format="wav",
-                                           parameters=["-acodec", "pcm_s16le",
-                                                     "-ar", sample_rate,
-                                                     "-ac", channels,
-                                                     "-b:a", bitrate])
-                        concatenated_files.append(chunk_path)
-                        debug_print(f"Created chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
-                        chunk_index += 1
+                        # Use ffmpeg to concatenate
+                        concat_cmd = [
+                            "ffmpeg", "-y",
+                            "-f", "concat",
+                            "-safe", "0",
+                            "-i", temp_list,
+                            "-c", "copy",
+                            chunk_path
+                        ]
+                        if run_ffmpeg_command(concat_cmd, debug_mode):
+                            concatenated_files.append(chunk_path)
+                            debug_print(f"Created chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+                            chunk_index += 1
+                        else:
+                            raise Exception("Failed to concatenate WAV files")
                     
                     # Start new chunk
-                    current_chunk = audio
-                    current_chunk_size = len(audio.raw_data)
+                    current_chunk = wav_file
+                    current_chunk_size = os.path.getsize(wav_file)
                 else:
                     # Add to current chunk
-                    current_chunk += audio
-                    current_chunk_size += len(audio.raw_data)
-            finally:
-                # Clean up temporary file
-                if os.path.exists(temp_wav):
-                    os.remove(temp_wav)
+                    current_chunk_size += os.path.getsize(wav_file)
+                
+                # Clean up temporary file list
+                os.remove(temp_list)
+            else:
+                # Use pydub for format conversion and concatenation
+                temp_wav = os.path.join(os.path.dirname(wav_file), f"temp_{os.path.basename(wav_file)}")
+                try:
+                    # Convert to standard WAV format
+                    convert_cmd = [
+                        "ffmpeg", "-y",
+                        "-i", wav_file,
+                        "-acodec", "pcm_s16le",
+                        "-ar", sample_rate,
+                        "-ac", channels,
+                        temp_wav
+                    ]
+                    if not run_ffmpeg_command(convert_cmd, debug_mode):
+                        raise Exception("Failed to convert WAV file")
+                    
+                    # Load the converted file
+                    audio = AudioSegment.from_wav(temp_wav)
+                    
+                    # If this is the first file or adding this file would exceed max size
+                    if current_chunk is None or (current_chunk_size + len(audio.raw_data) > max_size_bytes):
+                        # Save previous chunk if it exists
+                        if current_chunk is not None:
+                            chunk_path = os.path.join(os.path.dirname(output_path), 
+                                                    f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
+                            current_chunk.export(chunk_path, 
+                                               format="wav",
+                                               parameters=["-acodec", "pcm_s16le",
+                                                         "-ar", sample_rate,
+                                                         "-ac", channels,
+                                                         "-b:a", bitrate])
+                            concatenated_files.append(chunk_path)
+                            debug_print(f"Created chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+                            chunk_index += 1
+                        
+                        # Start new chunk
+                        current_chunk = audio
+                        current_chunk_size = len(audio.raw_data)
+                    else:
+                        # Add to current chunk
+                        current_chunk += audio
+                        current_chunk_size += len(audio.raw_data)
+                finally:
+                    # Clean up temporary file
+                    if os.path.exists(temp_wav):
+                        os.remove(temp_wav)
                 
         except Exception as e:
             logger.error(f"Error processing {wav_file}: {e}")
@@ -645,14 +726,33 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
     if current_chunk is not None:
         chunk_path = os.path.join(os.path.dirname(output_path), 
                                 f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
-        current_chunk.export(chunk_path, 
-                           format="wav",
-                           parameters=["-acodec", "pcm_s16le",
-                                     "-ar", sample_rate,
-                                     "-ac", channels,
-                                     "-b:a", bitrate])
-        concatenated_files.append(chunk_path)
-        debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+        if same_format:
+            # Use ffmpeg for direct concatenation
+            temp_list = os.path.join(os.path.dirname(output_path), "temp_file_list.txt")
+            with open(temp_list, "w") as f:
+                f.write(f"file '{os.path.abspath(current_chunk)}'\n")
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", temp_list,
+                "-c", "copy",
+                chunk_path
+            ]
+            if run_ffmpeg_command(concat_cmd, debug_mode):
+                concatenated_files.append(chunk_path)
+                debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+            os.remove(temp_list)
+        else:
+            # Use pydub for format conversion
+            current_chunk.export(chunk_path, 
+                               format="wav",
+                               parameters=["-acodec", "pcm_s16le",
+                                         "-ar", sample_rate,
+                                         "-ac", channels,
+                                         "-b:a", bitrate])
+            concatenated_files.append(chunk_path)
+            debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
     
     return concatenated_files
 
@@ -675,11 +775,11 @@ if __name__ == "__main__":
                         help="Regex to extract timestamp from filename. Must have one capture group for the timestamp string.")
 
     # Pre-processing arguments
-    preprocessing_group = parser.add_argument_group('Pre-processing Options (ON by default)')
-    preprocessing_group.add_argument("--disable-noise-reduction", action="store_false", dest="enable_noise_reduction", help="Disable noise reduction.")
-    preprocessing_group.add_argument("--disable-normalization", action="store_false", dest="enable_normalization", help="Disable audio normalization.")
+    preprocessing_group = parser.add_argument_group('Pre-processing Options (OFF by default)')
+    preprocessing_group.add_argument("--enable-noise-reduction", action="store_true", help="Enable noise reduction.")
+    preprocessing_group.add_argument("--enable-normalization", action="store_true", help="Enable audio normalization.")
     preprocessing_group.add_argument("--normalization-target-dbfs", type=float, default=-20.0, help="Target dBFS for normalization.")
-    parser.set_defaults(enable_noise_reduction=True, enable_normalization=True)
+    parser.set_defaults(enable_noise_reduction=False, enable_normalization=False)
     
     # WhisperX specific arguments
     whisperx_group = parser.add_argument_group('WhisperX Options')
