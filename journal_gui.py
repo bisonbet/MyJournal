@@ -12,6 +12,9 @@ import subprocess
 import sys
 import logging
 import logging.handlers
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+import re
 
 # Configure logging
 def setup_logging():
@@ -239,6 +242,132 @@ class JournalViewer:
         except Exception as e:
             return f"Error exporting to PDF: {str(e)}", None
 
+    def generate_word_cloud(self, current_path):
+        """Generate a word cloud from the transcription summary file in the current directory."""
+        try:
+            # Find the transcription summary file
+            summary_file = None
+            for file in (self.root_dir / current_path).glob("*_transcription_summary.txt"):
+                summary_file = file
+                break
+
+            if not summary_file:
+                return "No transcription summary file found in the current directory", None
+
+            # Read the summary file
+            with open(summary_file, 'r', encoding='utf-8') as f:
+                text = f.read()
+
+            # Clean the text
+            text = re.sub(r'\[.*?\]', '', text)  # Remove timestamps
+            text = re.sub(r'[^\w\s]', ' ', text)  # Remove special characters
+            text = ' '.join(text.split())  # Normalize whitespace
+
+            # Create a temporary directory for the word cloud
+            temp_dir = tempfile.mkdtemp()
+            wordcloud_path = Path(temp_dir) / "wordcloud.png"
+
+            # Generate the word cloud
+            wordcloud = WordCloud(
+                width=1200,
+                height=800,
+                background_color='white',
+                max_words=200,
+                contour_width=3,
+                contour_color='steelblue'
+            ).generate(text)
+
+            # Save the word cloud
+            plt.figure(figsize=(12, 8))
+            plt.imshow(wordcloud, interpolation='bilinear')
+            plt.axis('off')
+            plt.savefig(wordcloud_path, bbox_inches='tight', pad_inches=0)
+            plt.close()
+
+            # Convert to PDF using absolute path for the image
+            pdf_path = Path(temp_dir) / "wordcloud.pdf"
+            HTML(string=f'<img src="file://{wordcloud_path.absolute()}" style="width: 100%;">').write_pdf(pdf_path)
+
+            return str(pdf_path), temp_dir
+
+        except Exception as e:
+            error_msg = f"Error generating word cloud: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return error_msg, None
+
+    def get_script_description(self, script_name, current_path):
+        """Generate a description for the selected script based on the current path."""
+        if not current_path:
+            return "Please select a directory first"
+
+        try:
+            # Check if we're in the correct directory type for the selected script
+            path_parts = current_path.split('/')
+            if len(path_parts) < 2:
+                return "Invalid path format"
+
+            directory_type = path_parts[0]  # daily, weekly, or monthly
+
+            if script_name == "Generate Daily Summary":
+                if directory_type != "daily":
+                    return "Please select a Daily directory"
+                # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
+                if len(path_parts) >= 4:
+                    date_str = path_parts[-1]  # Get the MMDDYYYY part
+                    try:
+                        date = datetime.strptime(date_str, "%m%d%Y")
+                        return f"Transcribe, Diarize and Summarize sound files for {date.strftime('%B %d, %Y')}"
+                    except ValueError:
+                        return "Invalid date format in path"
+                return "Invalid path format for daily summary"
+
+            elif script_name == "Generate Weekly Summary":
+                if directory_type != "weekly":
+                    return "Please select a Weekly directory"
+                # Extract week from path (format: weekly/YYYY/Month/WeekOfMMDDYYYY)
+                if len(path_parts) >= 4:
+                    week_str = path_parts[-1]  # Get the WeekOfMMDDYYYY part
+                    if week_str.startswith("WeekOf"):
+                        try:
+                            date_str = week_str[6:]  # Remove "WeekOf" prefix
+                            date = datetime.strptime(date_str, "%m%d%Y")
+                            return f"Create Summary of Week of {date.strftime('%B %d, %Y')}"
+                        except ValueError:
+                            return "Invalid date format in week path"
+                return "Invalid path format for weekly summary"
+
+            elif script_name == "Generate Monthly Summary":
+                if directory_type != "monthly":
+                    return "Please select a Monthly directory"
+                # Extract month from path (format: monthly/YYYY/Month)
+                if len(path_parts) >= 3:
+                    month = path_parts[-1]  # Get the Month name
+                    year = path_parts[-2]   # Get the Year
+                    return f"Create Summary of {month} {year}"
+                return "Invalid path format for monthly summary"
+
+            elif script_name == "Export to PDF":
+                return "Export selected files to PDF"
+
+            elif script_name == "Word Cloud Analysis":
+                if directory_type != "daily":
+                    return "Please select a Daily directory"
+                # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
+                if len(path_parts) >= 4:
+                    date_str = path_parts[-1]  # Get the MMDDYYYY part
+                    try:
+                        date = datetime.strptime(date_str, "%m%d%Y")
+                        return f"Generate word cloud visualization from transcription for {date.strftime('%B %d, %Y')}"
+                    except ValueError:
+                        return "Invalid date format in path"
+                return "Invalid path format for word cloud analysis"
+
+            return "No description available for this script"
+
+        except Exception as e:
+            logger.error(f"Error generating script description: {str(e)}")
+            return "Error generating description"
+
 def create_interface(journal_viewer):
     with gr.Blocks(title="MyJournal", theme=gr.themes.Soft(), css="""
         .top-bar {
@@ -361,15 +490,22 @@ def create_interface(journal_viewer):
                 )
                 
                 # Save controls
-                save_button = gr.Button("Save Changes")
-                script_dropdown = gr.Dropdown(
-                    choices=["Export to PDF", "Generate Summary", "Word Cloud Analysis"],
-                    label="Select Script",
-                    interactive=True
-                )
-                run_script_button = gr.Button("Run Script")
-                script_status = gr.Textbox(label="Script Status", interactive=False)
-                pdf_download = gr.File(label="Download PDF", visible=False)
+                with gr.Group():
+                    save_button = gr.Button("Save Changes")
+                    script_dropdown = gr.Dropdown(
+                        choices=["Export to PDF", "Generate Daily Summary", "Generate Weekly Summary", "Generate Monthly Summary", "Word Cloud Analysis"],
+                        label="Select Script",
+                        interactive=True
+                    )
+                    script_description = gr.Textbox(
+                        label="Script Description",
+                        interactive=False,
+                        value="Select a script to see its description",
+                        show_label=True
+                    )
+                    run_script_button = gr.Button("Run Script")
+                    script_status = gr.Textbox(label="Script Status", interactive=False)
+                    pdf_download = gr.File(label="Download PDF", visible=False)
             
             # Main content column
             with gr.Column(scale=2) as main_column:
@@ -499,7 +635,7 @@ def create_interface(journal_viewer):
                         logger.error(f"PDF export error: {result}")
                         return result, None
                         
-                elif script_name == "Generate Summary":
+                elif script_name == "Generate Daily Summary":
                     if not current_path:
                         logger.warning("No directory selected for summary generation")
                         return "No directory selected", None
@@ -523,10 +659,10 @@ def create_interface(journal_viewer):
                         if result.stderr:
                             logger.warning(f"Script stderr:\n{result.stderr}")
                             
-                        return f"Summary generated successfully:\n{result.stdout}", None
+                        return f"Daily summary generated successfully:\n{result.stdout}", None
                         
                     except subprocess.CalledProcessError as e:
-                        error_msg = f"Error generating summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
+                        error_msg = f"Error generating daily summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
                         logger.error(error_msg)
                         return error_msg, None
                         
@@ -534,11 +670,43 @@ def create_interface(journal_viewer):
                         error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
                         logger.error(error_msg, exc_info=True)
                         return error_msg, None
+
+                elif script_name == "Generate Weekly Summary":
+                    if not current_path:
+                        logger.warning("No directory selected for weekly summary generation")
+                        return "No directory selected", None
+                    logger.info("Weekly summary generation requested (not implemented)")
+                    return "Weekly summary generation will be implemented", None
+
+                elif script_name == "Generate Monthly Summary":
+                    if not current_path:
+                        logger.warning("No directory selected for monthly summary generation")
+                        return "No directory selected", None
+                    logger.info("Monthly summary generation requested (not implemented)")
+                    return "Monthly summary generation will be implemented", None
                         
                 elif script_name == "Word Cloud Analysis":
-                    logger.info("Word cloud analysis requested (not implemented)")
-                    return "Word cloud analysis will be implemented", None
+                    if not current_path:
+                        logger.warning("No directory selected for word cloud analysis")
+                        return "No directory selected", None
+                        
+                    logger.info(f"Generating word cloud for path: {current_path}")
+                    result = journal_viewer.generate_word_cloud(current_path)
                     
+                    if isinstance(result, tuple) and len(result) == 2:
+                        pdf_path, temp_dir = result
+                        if pdf_path.startswith("Error"):
+                            logger.error(f"Word cloud generation error: {pdf_path}")
+                            return pdf_path, None
+                        else:
+                            # Store the temp directory in a global variable to prevent garbage collection
+                            run_script.temp_dir = temp_dir
+                            logger.info(f"Word cloud generated successfully: {pdf_path}")
+                            return "Word cloud generated successfully", pdf_path
+                    else:
+                        logger.error(f"Word cloud generation error: {result}")
+                        return result, None
+                        
                 return f"Running {script_name}...", None
                 
             except Exception as e:
@@ -650,6 +818,23 @@ def create_interface(journal_viewer):
             fn=cleanup_temp_dir,
             inputs=[pdf_download],
             outputs=[pdf_download]
+        )
+        
+        # Add script description update handler
+        def update_script_description(script_name, current_path):
+            return journal_viewer.get_script_description(script_name, current_path)
+
+        script_dropdown.change(
+            fn=update_script_description,
+            inputs=[script_dropdown, current_path],
+            outputs=[script_description]
+        )
+
+        # Also update description when path changes
+        current_path.change(
+            fn=update_script_description,
+            inputs=[script_dropdown, current_path],
+            outputs=[script_description]
         )
         
         return interface

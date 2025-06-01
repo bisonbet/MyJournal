@@ -11,4 +11,5 @@ pydub>=0.25.1
 requests>=2.31.0
 tiktoken>=0.5.0
 ffmpeg-python>=0.2.0
-weasyprint>=60.1 
+weasyprint>=60.1
+wordcloud>=1.9.3 
