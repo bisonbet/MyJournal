@@ -158,12 +158,18 @@ class JournalViewer:
                 for journal_type in self.journal_types:
                     search_dir = self.root_dir / journal_type
                     for file_path in search_dir.glob("*.md"):  # Only current directory
+                        # Skip files with "DEBUG" in the name
+                        if "DEBUG" in file_path.name.upper():
+                            continue
                         rel_path = file_path.relative_to(self.root_dir)
                         md_files.append(str(rel_path))
             else:
                 # Search in specific directory
                 search_dir = self.root_dir / path
                 for file_path in search_dir.glob("*.md"):  # Only current directory
+                    # Skip files with "DEBUG" in the name
+                    if "DEBUG" in file_path.name.upper():
+                        continue
                     rel_path = file_path.relative_to(self.root_dir)
                     md_files.append(str(rel_path))
         except Exception as e:
@@ -645,6 +651,8 @@ def create_interface(journal_viewer):
                                                 # Check for any relevant files with case-insensitive extensions
                                                 for ext in ['*.[mM][dD]', '*.[wW][aA][vV]', '*.[mM][pP]3', '*.[tT][xX][tT]']:
                                                     files = list(full_path.glob(ext))
+                                                    # Filter out DEBUG files
+                                                    files = [f for f in files if "DEBUG" not in f.name.upper()]
                                                     if files:
                                                         year_has_files = True
                                                         month_has_files = True
@@ -810,6 +818,8 @@ def create_interface(journal_viewer):
                                 # Check for any relevant files with case-insensitive extensions
                                 for ext in ['*.[mM][dD]', '*.[wW][aA][vV]', '*.[mM][pP]3', '*.[tT][xX][tT]']:
                                     files = list(full_path.glob(ext))
+                                    # Filter out DEBUG files
+                                    files = [f for f in files if "DEBUG" not in f.name.upper()]
                                     if files:
                                         logger.info(f"Found files in {path}: {files}")
                                         has_files = True

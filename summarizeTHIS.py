@@ -7,6 +7,7 @@ import tiktoken # For token counting for chunking
 import re
 import logging
 from logging_config import setup_logging
+from datetime import datetime
 
 # --- Configuration ---
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -527,17 +528,26 @@ def main():
 
         output_file_path_to_use = None
         sanitized_model_name = model_name_for_iteration.replace(":", "_").replace("/", "_")
-        output_extension = ".md" 
+        output_extension = ".md"
+
+        # Extract date from input file path
+        try:
+            # Get the directory name which should contain the date in MMDDYYYY format
+            dir_name = os.path.basename(os.path.dirname(args.file_path))
+            date_obj = datetime.strptime(dir_name, "%m%d%Y")
+            date_str = date_obj.strftime("%Y-%m-%d")
+        except (ValueError, IndexError):
+            # If date extraction fails, use current date
+            date_str = datetime.now().strftime("%Y-%m-%d")
 
         if args.output_file:
             path_part, original_filename_with_ext = os.path.split(args.output_file)
             base_name = os.path.splitext(original_filename_with_ext)[0] 
-            new_filename = f"{base_name}_{sanitized_model_name}{output_extension}"
+            new_filename = f"{date_str}-{sanitized_model_name}-daily-summary{output_extension}"
             output_file_path_to_use = os.path.join(path_part, new_filename)
         else:
             input_dir = os.path.dirname(args.file_path) 
-            input_filename_base = os.path.splitext(os.path.basename(args.file_path))[0]
-            new_filename = f"{input_filename_base}_summary_{sanitized_model_name}{output_extension}"
+            new_filename = f"{date_str}-{sanitized_model_name}-daily-summary{output_extension}"
             output_file_path_to_use = os.path.join(input_dir, new_filename)
 
         try:
