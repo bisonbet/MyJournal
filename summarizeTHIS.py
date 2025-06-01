@@ -208,8 +208,13 @@ def save_debug_file(original_input_filepath, model_name, step_label, content_to_
         print(f"Error saving debug file '{debug_filepath}': {e}")
 
 def remove_thinking_tokens(text):
-    """Remove any text between <think> and </think> tags."""
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    """Remove any text between <think> and </think> tags, including the tags themselves.
+    Handles potential variations in tag format and ensures all content is removed."""
+    # First pass: standard format
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Second pass: handle potential variations (extra spaces, different case)
+    text = re.sub(r'<\s*[tT][hH][iI][nN][kK]\s*>.*?</\s*[tT][hH][iI][nN][kK]\s*>', '', text, flags=re.DOTALL)
+    return text
 
 def summarize_transcript(full_text, tokenizer_for_counting, ollama_url, ollama_model,
                          # Pass-specific configurations
@@ -556,11 +561,10 @@ def main():
                 os.makedirs(output_dir_for_saving, exist_ok=True)
             
             with open(output_file_path_to_use, "w", encoding="utf-8") as f:
-                f.write(f"# Summary from model: {model_name_for_iteration}\n")
-                f.write(f"# Config: Initial (Ctx: {args.initial_pass_ollama_num_ctx}, MaxGen: {args.initial_pass_max_new_tokens}), "
-                        f"Intermediate (Ctx: {args.intermediate_pass_ollama_num_ctx}, MaxGen: {args.intermediate_pass_max_new_tokens}), "
-                        f"Final (Ctx: {args.final_pass_ollama_num_ctx}, MaxGen: {args.final_pass_max_new_tokens})\n\n")
-                f.write(final_summary)
+                f.write(f"# Summary from model: {model_name_for_iteration}\n\n")
+                # Remove think tags from final summary
+                cleaned_summary = remove_thinking_tokens(final_summary)
+                f.write(cleaned_summary)
             if args.DEBUG:
                 print(f"\nFinal summary for {model_name_for_iteration} saved to {output_file_path_to_use}")
         except Exception as e:
