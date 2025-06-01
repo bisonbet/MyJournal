@@ -67,6 +67,35 @@ class JournalViewer:
         day = yesterday.strftime("%m%d%Y")
         return f"daily/{year}/{month}/{day}"
         
+    def _get_path_for_date(self, selected_date):
+        """Get the appropriate path(s) for a selected date."""
+        # Convert string date to datetime if needed
+        if isinstance(selected_date, str):
+            selected_date = datetime.strptime(selected_date, "%Y-%m-%d")
+            
+        year = str(selected_date.year)
+        month = selected_date.strftime("%B")
+        day = selected_date.strftime("%m%d%Y")
+        
+        paths = []
+        
+        # Always add daily path
+        daily_path = f"daily/{year}/{month}/{day}"
+        paths.append(("Daily", daily_path))
+        
+        # If it's Sunday, add weekly path
+        if selected_date.weekday() == 6:  # Sunday is 6
+            week_start = selected_date
+            week_path = f"weekly/{year}/{month}/WeekOf{week_start.strftime('%m%d%Y')}"
+            paths.append(("Weekly", week_path))
+        
+        # If it's first day of month, add monthly path
+        if selected_date.day == 1:
+            monthly_path = f"monthly/{year}/{month}"
+            paths.append(("Monthly", monthly_path))
+        
+        return paths
+        
     def _ensure_directory_structure(self):
         """Ensure the journal directory structure exists."""
         for journal_type in self.journal_types:
@@ -368,6 +397,127 @@ class JournalViewer:
             logger.error(f"Error generating script description: {str(e)}")
             return "Error generating description"
 
+    def _find_most_recent_date_with_files(self):
+        """Find the most recent date that has files in its directory."""
+        today = datetime.now()
+        for i in range(365):  # Look back up to a year
+            check_date = today - timedelta(days=i)
+            paths = self._get_path_for_date(check_date)
+            for _, path in paths:
+                full_path = self.root_dir / path
+                if full_path.exists():
+                    if any(full_path.glob("*.md")) or any(full_path.glob("*.wav")) or \
+                       any(full_path.glob("*.mp3")) or any(full_path.glob("*.txt")):
+                        return check_date
+        return None
+
+def run_script(script_name, current_path, file1, file2=None, journal_viewer=None):
+    if not script_name:
+        return "No script selected", None
+        
+    try:
+        if script_name == "Export to PDF":
+            # Filter out None values from file paths
+            files_to_export = [f for f in [file1, file2] if f]
+            logger.info(f"Exporting to PDF: {files_to_export}")
+            result = journal_viewer.export_to_pdf(files_to_export)
+            
+            if isinstance(result, tuple) and len(result) == 2:
+                pdf_path, temp_dir = result
+                if pdf_path.startswith("Error"):
+                    logger.error(f"PDF export error: {pdf_path}")
+                    return pdf_path, None
+                else:
+                    # Store the temp directory in a global variable to prevent garbage collection
+                    run_script.temp_dir = temp_dir
+                    logger.info(f"PDF exported successfully to: {pdf_path}")
+                    return "PDF exported successfully", pdf_path
+            else:
+                logger.error(f"PDF export error: {result}")
+                return result, None
+                
+        elif script_name == "Generate Daily Summary":
+            if not current_path:
+                logger.warning("No directory selected for summary generation")
+                return "No directory selected", None
+                
+            try:
+                # Convert relative path to full path
+                full_path = str(journal_viewer.root_dir / current_path)
+                logger.info(f"Running diarize-audio.py with path: {full_path}")
+                
+                # Run diarize-audio.py with the full path
+                result = subprocess.run(
+                    [sys.executable, "diarize-audio.py", full_path],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                
+                # Log all output
+                if result.stdout:
+                    logger.info(f"Script stdout:\n{result.stdout}")
+                if result.stderr:
+                    logger.warning(f"Script stderr:\n{result.stderr}")
+                    
+                return f"Daily summary generated successfully:\n{result.stdout}", None
+                
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Error generating daily summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
+                logger.error(error_msg)
+                return error_msg, None
+                
+            except Exception as e:
+                error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
+                logger.error(error_msg, exc_info=True)
+                return error_msg, None
+
+        elif script_name == "Generate Weekly Summary":
+            if not current_path:
+                logger.warning("No directory selected for weekly summary generation")
+                return "No directory selected", None
+            logger.info("Weekly summary generation requested (not implemented)")
+            return "Weekly summary generation will be implemented", None
+
+        elif script_name == "Generate Monthly Summary":
+            if not current_path:
+                logger.warning("No directory selected for monthly summary generation")
+                return "No directory selected", None
+            logger.info("Monthly summary generation requested (not implemented)")
+            return "Monthly summary generation will be implemented", None
+                
+        elif script_name == "Word Cloud Analysis":
+            if not current_path:
+                logger.warning("No directory selected for word cloud analysis")
+                return "No directory selected", None
+                
+            logger.info(f"Generating word cloud for path: {current_path}")
+            result = journal_viewer.generate_word_cloud(current_path)
+            
+            if isinstance(result, tuple) and len(result) == 2:
+                pdf_path, temp_dir = result
+                if pdf_path.startswith("Error"):
+                    logger.error(f"Word cloud generation error: {pdf_path}")
+                    return pdf_path, None
+                else:
+                    # Store the temp directory in a global variable to prevent garbage collection
+                    run_script.temp_dir = temp_dir
+                    logger.info(f"Word cloud generated successfully: {pdf_path}")
+                    return "Word cloud generated successfully", pdf_path
+            else:
+                logger.error(f"Word cloud generation error: {result}")
+                return result, None
+                
+        return f"Running {script_name}...", None
+        
+    except Exception as e:
+        error_msg = f"Error running script: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return error_msg, None
+
+# Initialize the temp_dir attribute for the run_script function
+run_script.temp_dir = None
+
 def create_interface(journal_viewer):
     with gr.Blocks(title="MyJournal", theme=gr.themes.Soft(), css="""
         .top-bar {
@@ -428,6 +578,18 @@ def create_interface(journal_viewer):
         .main-content {
             margin-top: 60px;
         }
+        .calendar-container {
+            padding: 10px;
+            background: var(--background-fill-secondary);
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .directory-options {
+            margin-top: 10px;
+            padding: 10px;
+            background: var(--background-fill-secondary);
+            border-radius: 8px;
+        }
     """) as interface:
         # Top bar with title and toggle
         with gr.Row(elem_classes="top-bar"):
@@ -447,29 +609,101 @@ def create_interface(journal_viewer):
         with gr.Row(elem_classes="main-content"):
             # Left column in a collapsible container
             with gr.Column(scale=1, min_width=200) as left_column:
-                # Current path display
-                current_path = gr.Textbox(
-                    label="Current Path",
-                    interactive=False,
-                    value=journal_viewer._get_yesterdays_path()
-                )
+                # Calendar picker
+                with gr.Group(elem_classes="calendar-container"):
+                    with gr.Row():
+                        # Find most recent date with files
+                        most_recent_date = journal_viewer._find_most_recent_date_with_files()
+                        logger.info(f"Most recent date with files: {most_recent_date}")
+                        if most_recent_date is None:
+                            gr.Markdown("No journal entries found in the last year")
+                            return interface
+
+                        # Define months list for reference
+                        months = ["January", "February", "March", "April", "May", "June", 
+                                "July", "August", "September", "October", "November", "December"]
+
+                        # Find available years and months
+                        available_years = set()
+                        available_months = set()
+                        current_year = datetime.now().year
+                        
+                        logger.info("Checking for available years and months...")
+                        # Check last 2 years for files
+                        for year in range(current_year - 2, current_year + 1):
+                            year_has_files = False
+                            for month in range(1, 13):
+                                month_has_files = False
+                                # Check each day in the month
+                                for day in range(1, 32):
+                                    try:
+                                        date = datetime(year, month, day)
+                                        paths = journal_viewer._get_path_for_date(date)
+                                        for _, path in paths:
+                                            full_path = journal_viewer.root_dir / path
+                                            if full_path.exists():
+                                                # Check for any relevant files with case-insensitive extensions
+                                                for ext in ['*.[mM][dD]', '*.[wW][aA][vV]', '*.[mM][pP]3', '*.[tT][xX][tT]']:
+                                                    files = list(full_path.glob(ext))
+                                                    if files:
+                                                        year_has_files = True
+                                                        month_has_files = True
+                                                        break
+                                                if month_has_files:
+                                                    break
+                                        if month_has_files:
+                                            break
+                                    except ValueError:
+                                        # Skip invalid dates (e.g., Feb 30)
+                                        continue
+                                
+                                if month_has_files:
+                                    available_months.add(months[month - 1])
+                            
+                            if year_has_files:
+                                available_years.add(str(year))
+                        
+                        logger.info(f"Available years: {available_years}")
+                        logger.info(f"Available months: {available_months}")
+                                        
+                        # Generate list of years that have files
+                        years = sorted(list(available_years))
+                        year_dropdown = gr.Dropdown(
+                            label="Year",
+                            choices=years,
+                            value=str(most_recent_date.year) if str(most_recent_date.year) in years else years[0] if years else None,
+                            interactive=True
+                        )
+                        
+                        # Months that have files
+                        months_list = sorted(list(available_months), key=lambda x: months.index(x))
+                        month_dropdown = gr.Dropdown(
+                            label="Month",
+                            choices=months_list,
+                            value=months[most_recent_date.month - 1] if months[most_recent_date.month - 1] in months_list else months_list[0] if months_list else None,
+                            interactive=True
+                        )
+                        
+                        # Days (will be updated based on year/month)
+                        days = [str(day).zfill(2) for day in range(1, 32)]
+                        day_dropdown = gr.Dropdown(
+                            label="Day",
+                            choices=[],
+                            value=None,
+                            interactive=True
+                        )
                 
-                # Directory level selector
-                directory_dropdown = gr.Dropdown(
-                    choices=journal_viewer._get_immediate_subdirectories(journal_viewer._get_yesterdays_path()),
-                    value=None,
-                    label="Select Directory",
-                    interactive=True
-                )
-                
-                # Navigation buttons
-                with gr.Row():
-                    up_button = gr.Button("⬆️ Up")
-                    home_button = gr.Button("🏠 Home")
+                # Directory options (will be populated based on date selection)
+                with gr.Group(elem_classes="directory-options"):
+                    directory_radio = gr.Radio(
+                        label="Select Directory Type",
+                        choices=[],
+                        interactive=True
+                    )
                 
                 # File browser
                 file_dropdown = gr.Dropdown(
-                    choices=journal_viewer._get_markdown_files(journal_viewer._get_yesterdays_path()),
+                    choices=[],
                     label="Select File",
                     interactive=True
                 )
@@ -483,7 +717,7 @@ def create_interface(journal_viewer):
                 
                 # Second file browser (for side-by-side)
                 file_dropdown2 = gr.Dropdown(
-                    choices=journal_viewer._get_markdown_files(journal_viewer._get_yesterdays_path()),
+                    choices=[],
                     label="Select Second File",
                     interactive=True,
                     visible=False
@@ -545,252 +779,179 @@ def create_interface(journal_viewer):
                         with gr.Row():
                             preview = gr.HTML(label="Preview")
                             preview2 = gr.HTML(label="Second Preview", visible=False)
-        
+
         # Event handlers
-        def update_directory_list(current_path, selected_dir):
-            if selected_dir is None:
-                subdirs = journal_viewer._get_immediate_subdirectories(current_path)
-                files = journal_viewer._get_markdown_files(current_path)
-                # If there are files, select the first one
-                first_file = files[0] if files else None
-                return current_path, gr.update(choices=subdirs), gr.update(choices=files, value=first_file), gr.update(choices=files, value=None)
-            
-            new_path = f"{current_path}/{selected_dir}" if current_path else selected_dir
-            subdirs = journal_viewer._get_immediate_subdirectories(new_path)
-            files = journal_viewer._get_markdown_files(new_path)
-            # If there are files, select the first one
-            first_file = files[0] if files else None
-            
-            return new_path, gr.update(choices=subdirs), gr.update(choices=files, value=first_file), gr.update(choices=files, value=None)
-        
-        def go_up(current_path):
-            if not current_path:
-                subdirs = journal_viewer._get_immediate_subdirectories()
-                files = journal_viewer._get_markdown_files()
-                # If there are files, select the first one
-                first_file = files[0] if files else None
-                return current_path, gr.update(choices=subdirs), gr.update(choices=files, value=first_file), gr.update(choices=files, value=None)
-            
-            parent_path = str(Path(current_path).parent)
-            if parent_path == ".":
-                parent_path = ""
-            
-            subdirs = journal_viewer._get_immediate_subdirectories(parent_path)
-            files = journal_viewer._get_markdown_files(parent_path)
-            # If there are files, select the first one
-            first_file = files[0] if files else None
-            
-            return parent_path, gr.update(choices=subdirs), gr.update(choices=files, value=first_file), gr.update(choices=files, value=None)
-        
-        def go_home():
-            subdirs = journal_viewer._get_immediate_subdirectories()
-            files = journal_viewer._get_markdown_files()
-            # If there are files, select the first one
-            first_file = files[0] if files else None
-            return "", gr.update(choices=subdirs), gr.update(choices=files, value=first_file), gr.update(choices=files, value=None)
-        
-        def find_replace(text, find, replace):
-            if not find:
-                return text
-            return text.replace(find, replace)
-        
-        def toggle_side_by_side(show_side_by_side):
-            return {
-                file_dropdown2: gr.update(visible=show_side_by_side),
-                editor2: gr.update(visible=show_side_by_side),
-                preview2: gr.update(visible=show_side_by_side)
-            }
-        
-        def toggle_sidebar(current_state):
-            new_state = not current_state
-            return {
-                sidebar_visible: new_state,
-                left_column: gr.update(visible=new_state),
-                main_column: gr.update(scale=1 if new_state else 3),
-                toggle_button: gr.update(elem_classes=["toggle-button", "sidebar-hidden"] if not new_state else ["toggle-button"])
-            }
-        
-        def run_script(script_name, current_path, file1, file2=None):
-            if not script_name:
-                return "No script selected", None
-                
+        def update_days(year, month):
+            """Update the days dropdown based on selected year and month."""
             try:
-                if script_name == "Export to PDF":
-                    # Filter out None values from file paths
-                    files_to_export = [f for f in [file1, file2] if f]
-                    logger.info(f"Exporting to PDF: {files_to_export}")
-                    result = journal_viewer.export_to_pdf(files_to_export)
+                if not year or not month:
+                    logger.info("No year or month selected")
+                    return gr.update(choices=[], value=None)
                     
-                    if isinstance(result, tuple) and len(result) == 2:
-                        pdf_path, temp_dir = result
-                        if pdf_path.startswith("Error"):
-                            logger.error(f"PDF export error: {pdf_path}")
-                            return pdf_path, None
-                        else:
-                            # Store the temp directory in a global variable to prevent garbage collection
-                            run_script.temp_dir = temp_dir
-                            logger.info(f"PDF exported successfully to: {pdf_path}")
-                            return "PDF exported successfully", pdf_path
-                    else:
-                        logger.error(f"PDF export error: {result}")
-                        return result, None
-                        
-                elif script_name == "Generate Daily Summary":
-                    if not current_path:
-                        logger.warning("No directory selected for summary generation")
-                        return "No directory selected", None
-                        
+                # Convert month name to number (1-12)
+                month_num = months.index(month) + 1
+                # Get the last day of the month
+                last_day = (datetime(int(year), month_num + 1, 1) - timedelta(days=1)).day
+                available_days = []
+                
+                logger.info(f"Checking days for {year}-{month_num}")
+                
+                # Check each day to see if it has files
+                for day in range(1, last_day + 1):
                     try:
-                        # Convert relative path to full path
-                        full_path = str(journal_viewer.root_dir / current_path)
-                        logger.info(f"Running diarize-audio.py with path: {full_path}")
+                        date = datetime(int(year), month_num, day)
+                        paths = journal_viewer._get_path_for_date(date)
+                        has_files = False
                         
-                        # Run diarize-audio.py with the full path
-                        result = subprocess.run(
-                            [sys.executable, "diarize-audio.py", full_path],
-                            capture_output=True,
-                            text=True,
-                            check=True
-                        )
-                        
-                        # Log all output
-                        if result.stdout:
-                            logger.info(f"Script stdout:\n{result.stdout}")
-                        if result.stderr:
-                            logger.warning(f"Script stderr:\n{result.stderr}")
-                            
-                        return f"Daily summary generated successfully:\n{result.stdout}", None
-                        
-                    except subprocess.CalledProcessError as e:
-                        error_msg = f"Error generating daily summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
-                        logger.error(error_msg)
-                        return error_msg, None
-                        
-                    except Exception as e:
-                        error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
-                        logger.error(error_msg, exc_info=True)
-                        return error_msg, None
-
-                elif script_name == "Generate Weekly Summary":
-                    if not current_path:
-                        logger.warning("No directory selected for weekly summary generation")
-                        return "No directory selected", None
-                    logger.info("Weekly summary generation requested (not implemented)")
-                    return "Weekly summary generation will be implemented", None
-
-                elif script_name == "Generate Monthly Summary":
-                    if not current_path:
-                        logger.warning("No directory selected for monthly summary generation")
-                        return "No directory selected", None
-                    logger.info("Monthly summary generation requested (not implemented)")
-                    return "Monthly summary generation will be implemented", None
-                        
-                elif script_name == "Word Cloud Analysis":
-                    if not current_path:
-                        logger.warning("No directory selected for word cloud analysis")
-                        return "No directory selected", None
-                        
-                    logger.info(f"Generating word cloud for path: {current_path}")
-                    result = journal_viewer.generate_word_cloud(current_path)
+                        # Check each path type (daily, weekly, monthly) for files
+                        for label, path in paths:
+                            full_path = journal_viewer.root_dir / path
+                            if full_path.exists():
+                                # Check for any relevant files with case-insensitive extensions
+                                for ext in ['*.[mM][dD]', '*.[wW][aA][vV]', '*.[mM][pP]3', '*.[tT][xX][tT]']:
+                                    files = list(full_path.glob(ext))
+                                    if files:
+                                        logger.info(f"Found files in {path}: {files}")
+                                        has_files = True
+                                        break
+                                if has_files:
+                                    break
+                                    
+                        if has_files:
+                            available_days.append(str(day).zfill(2))
+                            logger.info(f"Added day {day} to available days")
+                    except ValueError as e:
+                        logger.error(f"Invalid date: {e}")
+                        continue
+                
+                logger.info(f"Available days: {available_days}")
+                
+                # If no days are available, return empty choices
+                if not available_days:
+                    logger.info("No days with files found")
+                    return gr.update(choices=[], value=None)
                     
-                    if isinstance(result, tuple) and len(result) == 2:
-                        pdf_path, temp_dir = result
-                        if pdf_path.startswith("Error"):
-                            logger.error(f"Word cloud generation error: {pdf_path}")
-                            return pdf_path, None
-                        else:
-                            # Store the temp directory in a global variable to prevent garbage collection
-                            run_script.temp_dir = temp_dir
-                            logger.info(f"Word cloud generated successfully: {pdf_path}")
-                            return "Word cloud generated successfully", pdf_path
-                    else:
-                        logger.error(f"Word cloud generation error: {result}")
-                        return result, None
-                        
-                return f"Running {script_name}...", None
+                # Try to keep the current day if it's still valid
+                current_day = day_dropdown.value
+                if current_day in available_days:
+                    logger.info(f"Keeping current day: {current_day}")
+                    return gr.update(choices=available_days, value=current_day)
+                logger.info(f"Using first available day: {available_days[0]}")
+                return gr.update(choices=available_days, value=available_days[0])
                 
             except Exception as e:
-                error_msg = f"Error running script: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                return error_msg, None
-        
-        # Initialize the temp_dir attribute for the run_script function
-        run_script.temp_dir = None
-        
-        # Connect the directory navigation
-        directory_dropdown.change(
-            fn=update_directory_list,
-            inputs=[current_path, directory_dropdown],
-            outputs=[current_path, directory_dropdown, file_dropdown, file_dropdown2]
+                logger.error(f"Error updating days: {str(e)}")
+                return gr.update(choices=[], value=None)
+
+        def get_selected_date(year, month, day):
+            """Convert selected year, month, day to a datetime object."""
+            try:
+                if not all([year, month, day]):
+                    return datetime.now() - timedelta(days=1)
+                    
+                month_num = months.index(month) + 1
+                return datetime(int(year), month_num, int(day))
+            except Exception as e:
+                logger.error(f"Error creating date: {str(e)}")
+                return datetime.now() - timedelta(days=1)
+
+        def update_file_list(selected_path):
+            """Update the file list based on the selected directory path."""
+            if not selected_path:
+                return gr.update(choices=[])
+            files = journal_viewer._get_markdown_files(selected_path)
+            return gr.update(choices=files, value=files[0] if files else None)
+
+        def get_initial_directory_options():
+            """Get initial directory options for the most recent date."""
+            paths = journal_viewer._get_path_for_date(most_recent_date)
+            choices = [(label, path) for label, path in paths]
+            return gr.update(choices=choices, value=choices[0][1] if choices else None)
+
+        # Update days when year or month changes
+        year_dropdown.change(
+            fn=update_days,
+            inputs=[year_dropdown, month_dropdown],
+            outputs=[day_dropdown]
         )
-        
-        up_button.click(
-            fn=go_up,
-            inputs=[current_path],
-            outputs=[current_path, directory_dropdown, file_dropdown, file_dropdown2]
+        month_dropdown.change(
+            fn=update_days,
+            inputs=[year_dropdown, month_dropdown],
+            outputs=[day_dropdown]
         )
-        
-        home_button.click(
-            fn=go_home,
+
+        # Initial day dropdown update
+        def initialize_day_dropdown():
+            return update_days(str(most_recent_date.year), months[most_recent_date.month - 1])
+
+        # Add a load event to initialize the day dropdown
+        interface.load(
+            fn=initialize_day_dropdown,
             inputs=[],
-            outputs=[current_path, directory_dropdown, file_dropdown, file_dropdown2]
+            outputs=[day_dropdown]
         )
-        
+
+        # Update directory options when any date component changes
+        def update_directory_options_from_components(year, month, day):
+            selected_date = get_selected_date(year, month, day)
+            paths = journal_viewer._get_path_for_date(selected_date)
+            choices = [(label, path) for label, path in paths]
+            return gr.update(choices=choices, value=choices[0][1] if choices else None)
+
+        # Connect date components to directory options
+        year_dropdown.change(
+            fn=update_directory_options_from_components,
+            inputs=[year_dropdown, month_dropdown, day_dropdown],
+            outputs=[directory_radio]
+        )
+        month_dropdown.change(
+            fn=update_directory_options_from_components,
+            inputs=[year_dropdown, month_dropdown, day_dropdown],
+            outputs=[directory_radio]
+        )
+        day_dropdown.change(
+            fn=update_directory_options_from_components,
+            inputs=[year_dropdown, month_dropdown, day_dropdown],
+            outputs=[directory_radio]
+        )
+
+        # Connect directory selection to file list
+        directory_radio.change(
+            fn=update_file_list,
+            inputs=[directory_radio],
+            outputs=[file_dropdown]
+        )
+
+        # Connect file selection to editor
         file_dropdown.change(
             fn=journal_viewer.load_file,
             inputs=[file_dropdown],
             outputs=[editor, preview]
         )
-        
-        file_dropdown2.change(
-            fn=journal_viewer.load_file,
-            inputs=[file_dropdown2],
-            outputs=[editor2, preview2]
+
+        # Connect the script description update
+        def update_script_description(script_name, selected_path):
+            return journal_viewer.get_script_description(script_name, selected_path)
+
+        script_dropdown.change(
+            fn=update_script_description,
+            inputs=[script_dropdown, directory_radio],
+            outputs=[script_description]
         )
-        
-        editor.change(
-            fn=journal_viewer._render_markdown,
-            inputs=[editor],
-            outputs=[preview]
+
+        directory_radio.change(
+            fn=update_script_description,
+            inputs=[script_dropdown, directory_radio],
+            outputs=[script_description]
         )
-        
-        editor2.change(
-            fn=journal_viewer._render_markdown,
-            inputs=[editor2],
-            outputs=[preview2]
-        )
-        
-        save_button.click(
-            fn=journal_viewer.save_file,
-            inputs=[file_dropdown, editor],
-            outputs=[script_status]
-        )
-        
-        find_replace_button.click(
-            fn=find_replace,
-            inputs=[editor, find_text, replace_text],
-            outputs=[editor]
-        )
-        
-        side_by_side.change(
-            fn=toggle_side_by_side,
-            inputs=[side_by_side],
-            outputs=[file_dropdown2, editor2, preview2]
-        )
-        
-        toggle_button.click(
-            fn=toggle_sidebar,
-            inputs=[sidebar_visible],
-            outputs=[sidebar_visible, left_column, main_column, toggle_button]
-        )
-        
+
         # Connect the script runner
         run_script_button.click(
-            fn=run_script,
-            inputs=[script_dropdown, current_path, file_dropdown, file_dropdown2],
+            fn=lambda *args: run_script(*args, journal_viewer=journal_viewer),
+            inputs=[script_dropdown, directory_radio, file_dropdown, file_dropdown2],
             outputs=[script_status, pdf_download]
         )
-        
+
         # Show/hide PDF download based on script status
         def update_pdf_download(status, pdf_path):
             if pdf_path and os.path.exists(pdf_path):
@@ -818,23 +979,6 @@ def create_interface(journal_viewer):
             fn=cleanup_temp_dir,
             inputs=[pdf_download],
             outputs=[pdf_download]
-        )
-        
-        # Add script description update handler
-        def update_script_description(script_name, current_path):
-            return journal_viewer.get_script_description(script_name, current_path)
-
-        script_dropdown.change(
-            fn=update_script_description,
-            inputs=[script_dropdown, current_path],
-            outputs=[script_description]
-        )
-
-        # Also update description when path changes
-        current_path.change(
-            fn=update_script_description,
-            inputs=[script_dropdown, current_path],
-            outputs=[script_description]
         )
         
         return interface

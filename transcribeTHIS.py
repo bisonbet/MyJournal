@@ -432,10 +432,14 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                 "--model", "large-v3", "--diarize", "--language", "en",
                 "--highlight_words", "True", "--hf_token", hf_token,
                 "--output_dir", directory_path, 
-                "--vad_onset", str(args.vad_onset), "--vad_offset", str(args.vad_offset),
-                "--device", args.device,
-                "--compute_type", args.compute_type
+                "--vad_onset", str(args.vad_onset), "--vad_offset", str(args.vad_offset)
             ]
+            
+            # Set compute type based on device
+            if args.device in ["mps", "cuda"]:
+                command.extend(["--compute_type", "float32"])
+            else:
+                command.extend(["--compute_type", "int8"])
             
             if args.DEBUG: debug_print(f"DEBUG: WhisperX command: {' '.join(command)}", args.DEBUG)
 
