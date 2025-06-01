@@ -495,10 +495,10 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                             date_obj = datetime.strptime(date_str, "%m%d%Y")
                             formatted_date = date_obj.strftime("%Y-%m-%d")
                             
-                            # Run diarize-audio.py with the --generate-weekly flag
-                            logger.info(f"Running diarize-audio.py with --generate-weekly for date: {formatted_date}")
+                            # Run summarize_week.py directly with the date
+                            logger.info(f"Running summarize_week.py for date: {formatted_date}")
                             result = subprocess.run(
-                                [sys.executable, "diarize-audio.py", str(journal_viewer.root_dir), "--generate-weekly"],
+                                [sys.executable, "summarize_week.py", formatted_date, "--base_dir", str(journal_viewer.root_dir)],
                                 capture_output=True,
                                 text=True,
                                 check=True
