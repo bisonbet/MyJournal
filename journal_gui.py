@@ -482,8 +482,58 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
             if not current_path:
                 logger.warning("No directory selected for weekly summary generation")
                 return "No directory selected", None
-            logger.info("Weekly summary generation requested (not implemented)")
-            return "Weekly summary generation will be implemented", None
+                
+            try:
+                # Extract date from the path (format: weekly/YYYY/Month/WeekOfMMDDYYYY)
+                path_parts = current_path.split('/')
+                if len(path_parts) >= 4:
+                    week_str = path_parts[-1]  # Get the WeekOfMMDDYYYY part
+                    if week_str.startswith("WeekOf"):
+                        date_str = week_str[6:]  # Remove "WeekOf" prefix
+                        try:
+                            # Convert MMDDYYYY to YYYY-MM-DD format
+                            date_obj = datetime.strptime(date_str, "%m%d%Y")
+                            formatted_date = date_obj.strftime("%Y-%m-%d")
+                            
+                            # Run diarize-audio.py with the --generate-weekly flag
+                            logger.info(f"Running diarize-audio.py with --generate-weekly for date: {formatted_date}")
+                            result = subprocess.run(
+                                [sys.executable, "diarize-audio.py", str(journal_viewer.root_dir), "--generate-weekly"],
+                                capture_output=True,
+                                text=True,
+                                check=True
+                            )
+                            
+                            # Log all output
+                            if result.stdout:
+                                logger.info(f"Script stdout:\n{result.stdout}")
+                            if result.stderr:
+                                logger.warning(f"Script stderr:\n{result.stderr}")
+                                
+                            return f"Weekly summary generated successfully:\n{result.stdout}", None
+                            
+                        except ValueError as e:
+                            error_msg = f"Invalid date format in path: {e}"
+                            logger.error(error_msg)
+                            return error_msg, None
+                    else:
+                        error_msg = "Invalid week folder format"
+                        logger.error(error_msg)
+                        return error_msg, None
+                else:
+                    error_msg = "Invalid path format for weekly summary"
+                    logger.error(error_msg)
+                    return error_msg, None
+                    
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Error generating weekly summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
+                logger.error(error_msg)
+                return error_msg, None
+                
+            except Exception as e:
+                error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
+                logger.error(error_msg, exc_info=True)
+                return error_msg, None
 
         elif script_name == "Generate Monthly Summary":
             if not current_path:

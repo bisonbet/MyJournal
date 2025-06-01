@@ -13,6 +13,7 @@ from logging_config import setup_logging
 # --- Configuration ---
 SCRIPT1_NAME = "transcribeTHIS.py"
 SCRIPT2_NAME = "summarizeTHIS.py"
+SCRIPT3_NAME = "summarize_week.py"
 
 # Initialize logger with DEBUG level by default since this is the orchestrator
 logger = setup_logging('diarize', True)  # Default to debug mode
@@ -22,7 +23,7 @@ def check_script_exists(script_name):
     script_path = os.path.join(os.getcwd(), script_name)
     if not os.path.exists(script_path):
         logger.error(f"Script '{script_name}' not found in the current directory ({os.getcwd()}).")
-        logger.error(f"Please ensure {SCRIPT1_NAME} and {SCRIPT2_NAME} are in the same directory as this orchestrator (diarize-audio.py).")
+        logger.error(f"Please ensure {SCRIPT1_NAME}, {SCRIPT2_NAME}, and {SCRIPT3_NAME} are in the same directory as this orchestrator (diarize-audio.py).")
         return False
     return True
 
@@ -287,6 +288,70 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         return False
     return True
 
+def run_script3(date_str, is_orchestrator_debug_mode, script3_extra_args):
+    """
+    Runs summarize_week.py to generate a weekly summary.
+    Returns True if successful, False otherwise.
+    """
+    logger.info(f"\n--- Running Weekly Summary Script ({SCRIPT3_NAME}) ---")
+    logger.info(f"Date for weekly summary: {date_str}")
+
+    script3_path = os.path.join(os.getcwd(), SCRIPT3_NAME)
+    command = [
+        sys.executable,
+        script3_path,
+        date_str
+    ]
+
+    if is_orchestrator_debug_mode:
+        command.append("--DEBUG")
+    
+    if script3_extra_args:
+        command.extend(script3_extra_args)
+
+    logger.info(f"Executing: {' '.join(command)}")
+    try:
+        # Create process with real-time output
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # Line buffered
+            env=os.environ.copy()
+        )
+
+        # Read output in real-time
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(output.strip())  # Print immediately
+                logger.info(output.strip())
+
+        # Get any remaining stderr
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            print(stderr_output.strip())  # Print immediately
+            logger.warning(stderr_output.strip())
+
+        return_code = process.poll()
+
+        if return_code == 0:
+            logger.info(f"Script '{SCRIPT3_NAME}' completed successfully.")
+            return True
+        else:
+            logger.error(f"Error: {SCRIPT3_NAME} failed with return code {return_code}.")
+            return False
+
+    except FileNotFoundError:
+        logger.error(f"Error: Could not find the Python interpreter or the script '{script3_path}'.")
+        return False
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while trying to run {SCRIPT3_NAME}: {e}")
+        return False
+
 def main():
     """Main function to orchestrate the script execution."""
     parser = argparse.ArgumentParser(
@@ -302,14 +367,22 @@ def main():
         '--production', action='store_true', default=False,
         help="Run in production mode (deletes WAVs after MP3 conversion, no --DEBUG to child scripts). Default is DEBUG mode."
     )
+    parser.add_argument(
+        '--generate-weekly', action='store_true', default=False,
+        help="Generate weekly summary after processing the daily summaries."
+    )
 
-    args, script2_extra_args = parser.parse_known_args()
+    args, remaining_args = parser.parse_known_args()
     is_orchestrator_debug_mode = not args.production
 
     # Update logger with debug mode (will be DEBUG unless --production is used)
     logger = setup_logging('diarize', is_orchestrator_debug_mode)
 
     if not check_script_exists(SCRIPT1_NAME) or not check_script_exists(SCRIPT2_NAME):
+        sys.exit(1)
+    
+    if args.generate_weekly and not check_script_exists(SCRIPT3_NAME):
+        logger.error(f"Error: {SCRIPT3_NAME} not found. Cannot generate weekly summary.")
         sys.exit(1)
 
     if not shutil.which("whisperx"):
@@ -339,7 +412,7 @@ def main():
         logger.error(f"\nOrchestration failed: {SCRIPT1_NAME} did not produce the expected output file correctly.")
         sys.exit(1)
 
-    script2_success = run_script2(concatenated_transcript_file, is_orchestrator_debug_mode, script2_extra_args)
+    script2_success = run_script2(concatenated_transcript_file, is_orchestrator_debug_mode, remaining_args)
     if not script2_success:
         logger.error(f"\nOrchestration partially failed: {SCRIPT2_NAME} reported errors.")
         logger.info("Proceeding with MP3 conversion despite summarization issues...")
@@ -348,10 +421,26 @@ def main():
     if not mp3_conversion_success:
         logger.warning("\nOrchestration warning: MP3 conversion step encountered issues.")
 
-    if not script2_success or not mp3_conversion_success:
+    # Generate weekly summary if requested
+    weekly_summary_success = True
+    if args.generate_weekly:
+        # Extract date from the wav directory name (assuming it's in MMDDYYYY format)
+        try:
+            dir_name = os.path.basename(abs_wav_directory)
+            date_obj = datetime.strptime(dir_name, "%m%d%Y")
+            date_str = date_obj.strftime("%Y-%m-%d")
+            weekly_summary_success = run_script3(date_str, is_orchestrator_debug_mode, remaining_args)
+            if not weekly_summary_success:
+                logger.warning("\nOrchestration warning: Weekly summary generation encountered issues.")
+        except ValueError:
+            logger.error(f"Error: Could not extract date from directory name '{dir_name}'. Weekly summary generation skipped.")
+            weekly_summary_success = False
+
+    if not script2_success or not mp3_conversion_success or not weekly_summary_success:
         logger.warning("\n--- Orchestration Finished with warnings/errors ---")
-        if not script2_success : sys.exit(2)
-        elif not mp3_conversion_success: sys.exit(3) 
+        if not script2_success: sys.exit(2)
+        elif not mp3_conversion_success: sys.exit(3)
+        elif not weekly_summary_success: sys.exit(4)
     else:
         logger.info("\n--- Orchestration Finished Successfully ---")
 
