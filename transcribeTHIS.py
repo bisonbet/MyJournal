@@ -43,8 +43,28 @@ if platform.system() == "Darwin":
     DEFAULT_DEVICE = "mps"
     DEFAULT_COMPUTE_TYPE = "float32"  # Changed from 'auto' to 'float32' for macOS
 else:
-    DEFAULT_DEVICE = "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"
-    DEFAULT_COMPUTE_TYPE = "float16"
+    # Attempt to import torch and check for CUDA availability
+    try:
+        import torch
+        if torch.cuda.is_available():
+                DEFAULT_DEVICE = "cuda"
+                DEFAULT_COMPUTE_TYPE = "float16" # Use float16 if CUDA is available for better performance
+                logger.info("CUDA GPU detected. Using 'cuda' device and 'float16' compute type.")
+        else:
+                DEFAULT_DEVICE = "cpu"
+                DEFAULT_COMPUTE_TYPE = "int8" # Fallback to int8 or float32 for CPU
+                logger.warning("INFO: torch installed but CUDA not available. Using 'cpu' device and 'int8' compute type.")
+                TORCH_AVAILABLE = True # Set this flag if torch import was successful
+    except ImportError:
+                DEFAULT_DEVICE = "cpu"
+                DEFAULT_COMPUTE_TYPE = "int8" # Fallback to int8 or float32 for CPU
+                TORCH_AVAILABLE = False # Set this flag if torch import failed
+                logger.warning("INFO: 'torch' not installed. Using 'cpu' device and 'int8' compute type.")
+                logger.warning("INFO: For GPU-accelerated audio processing, please install 'torch' and 'torchaudio'.")
+                logger.warning("INFO: You can typically install them using: pip install torch torchaudio")
+
+    # The DEVICE variable from the previous version is redundant now
+    # as DEFAULT_DEVICE is set correctly based on availability.
 
 # Attempt to import optional dependencies and provide guidance if missing
 try:
