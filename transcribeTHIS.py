@@ -645,27 +645,28 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
     debug_print(f"Using audio settings: {sample_rate}Hz, {channels} channels, {codec}, {int(bitrate)/1000}kbit", debug_mode)
     
     concatenated_files = []
-    current_chunk = None
+    current_chunk_files = []
     current_chunk_size = 0
     chunk_index = 0
     
     for wav_file in wav_files:
         try:
             debug_print(f"Processing {os.path.basename(wav_file)}", debug_mode)
+            file_size = os.path.getsize(wav_file)
             
-            # If formats are the same, we can use ffmpeg directly for concatenation
-            if same_format:
-                # Create a temporary file list for ffmpeg
-                temp_list = os.path.join(os.path.dirname(wav_file), "temp_file_list.txt")
-                with open(temp_list, "w") as f:
-                    f.write(f"file '{os.path.abspath(wav_file)}'\n")
+            # If adding this file would exceed max size, save current chunk and start new one
+            if current_chunk_files and (current_chunk_size + file_size > max_size_bytes):
+                chunk_path = os.path.join(os.path.dirname(output_path), 
+                                        f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
                 
-                # If this is the first file or adding this file would exceed max size
-                if current_chunk is None or (current_chunk_size + os.path.getsize(wav_file) > max_size_bytes):
-                    # Save previous chunk if it exists
-                    if current_chunk is not None:
-                        chunk_path = os.path.join(os.path.dirname(output_path), 
-                                                f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
+                if same_format:
+                    # Create a temporary file list for ffmpeg
+                    temp_list = os.path.join(os.path.dirname(output_path), "temp_file_list.txt")
+                    try:
+                        with open(temp_list, "w") as f:
+                            for file in current_chunk_files:
+                                f.write(f"file '{os.path.abspath(file)}'\n")
+                        
                         # Use ffmpeg to concatenate
                         concat_cmd = [
                             "ffmpeg", "-y",
@@ -681,24 +682,98 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
                             chunk_index += 1
                         else:
                             raise Exception("Failed to concatenate WAV files")
-                    
-                    # Start new chunk
-                    current_chunk = wav_file
-                    current_chunk_size = os.path.getsize(wav_file)
+                    finally:
+                        if os.path.exists(temp_list):
+                            os.remove(temp_list)
                 else:
-                    # Add to current chunk
-                    current_chunk_size += os.path.getsize(wav_file)
+                    # Use pydub for format conversion and concatenation
+                    current_chunk = None
+                    for file in current_chunk_files:
+                        temp_wav = os.path.join(os.path.dirname(file), f"temp_{os.path.basename(file)}")
+                        try:
+                            # Convert to standard WAV format
+                            convert_cmd = [
+                                "ffmpeg", "-y",
+                                "-i", file,
+                                "-acodec", "pcm_s16le",
+                                "-ar", sample_rate,
+                                "-ac", channels,
+                                temp_wav
+                            ]
+                            if not run_ffmpeg_command(convert_cmd, debug_mode):
+                                raise Exception("Failed to convert WAV file")
+                            
+                            # Load the converted file
+                            audio = AudioSegment.from_wav(temp_wav)
+                            if current_chunk is None:
+                                current_chunk = audio
+                            else:
+                                current_chunk += audio
+                        finally:
+                            if os.path.exists(temp_wav):
+                                os.remove(temp_wav)
+                    
+                    if current_chunk:
+                        current_chunk.export(chunk_path, 
+                                           format="wav",
+                                           parameters=["-acodec", "pcm_s16le",
+                                                     "-ar", sample_rate,
+                                                     "-ac", channels,
+                                                     "-b:a", bitrate])
+                        concatenated_files.append(chunk_path)
+                        debug_print(f"Created chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+                        chunk_index += 1
                 
-                # Clean up temporary file list
-                os.remove(temp_list)
-            else:
-                # Use pydub for format conversion and concatenation
-                temp_wav = os.path.join(os.path.dirname(wav_file), f"temp_{os.path.basename(wav_file)}")
+                # Reset for next chunk
+                current_chunk_files = []
+                current_chunk_size = 0
+            
+            # Add current file to chunk
+            current_chunk_files.append(wav_file)
+            current_chunk_size += file_size
+            
+        except Exception as e:
+            logger.error(f"Error processing {wav_file}: {e}")
+            continue
+    
+    # Process the final chunk if there are any remaining files
+    if current_chunk_files:
+        chunk_path = os.path.join(os.path.dirname(output_path), 
+                                f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
+        
+        if same_format:
+            # Create a temporary file list for ffmpeg
+            temp_list = os.path.join(os.path.dirname(output_path), "temp_file_list.txt")
+            try:
+                with open(temp_list, "w") as f:
+                    for file in current_chunk_files:
+                        f.write(f"file '{os.path.abspath(file)}'\n")
+                
+                # Use ffmpeg to concatenate
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", temp_list,
+                    "-c", "copy",
+                    chunk_path
+                ]
+                if run_ffmpeg_command(concat_cmd, debug_mode):
+                    concatenated_files.append(chunk_path)
+                    debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
+            finally:
+                if os.path.exists(temp_list):
+                    os.remove(temp_list)
+        else:
+            # Use pydub for format conversion and concatenation
+            current_chunk = None
+            for file in current_chunk_files:
+                temp_wav = os.path.join(os.path.dirname(file), f"temp_{os.path.basename(file)}")
                 try:
                     # Convert to standard WAV format
                     convert_cmd = [
                         "ffmpeg", "-y",
-                        "-i", wav_file,
+                        "-i", file,
                         "-acodec", "pcm_s16le",
                         "-ar", sample_rate,
                         "-ac", channels,
@@ -709,70 +784,23 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
                     
                     # Load the converted file
                     audio = AudioSegment.from_wav(temp_wav)
-                    
-                    # If this is the first file or adding this file would exceed max size
-                    if current_chunk is None or (current_chunk_size + len(audio.raw_data) > max_size_bytes):
-                        # Save previous chunk if it exists
-                        if current_chunk is not None:
-                            chunk_path = os.path.join(os.path.dirname(output_path), 
-                                                    f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
-                            current_chunk.export(chunk_path, 
-                                               format="wav",
-                                               parameters=["-acodec", "pcm_s16le",
-                                                         "-ar", sample_rate,
-                                                         "-ac", channels,
-                                                         "-b:a", bitrate])
-                            concatenated_files.append(chunk_path)
-                            debug_print(f"Created chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
-                            chunk_index += 1
-                        
-                        # Start new chunk
+                    if current_chunk is None:
                         current_chunk = audio
-                        current_chunk_size = len(audio.raw_data)
                     else:
-                        # Add to current chunk
                         current_chunk += audio
-                        current_chunk_size += len(audio.raw_data)
                 finally:
-                    # Clean up temporary file
                     if os.path.exists(temp_wav):
                         os.remove(temp_wav)
-                
-        except Exception as e:
-            logger.error(f"Error processing {wav_file}: {e}")
-            continue
-    
-    # Save the last chunk if it exists
-    if current_chunk is not None:
-        chunk_path = os.path.join(os.path.dirname(output_path), 
-                                f"{os.path.splitext(os.path.basename(output_path))[0]}_chunk{chunk_index}.wav")
-        if same_format:
-            # Use ffmpeg for direct concatenation
-            temp_list = os.path.join(os.path.dirname(output_path), "temp_file_list.txt")
-            with open(temp_list, "w") as f:
-                f.write(f"file '{os.path.abspath(current_chunk)}'\n")
-            concat_cmd = [
-                "ffmpeg", "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", temp_list,
-                "-c", "copy",
-                chunk_path
-            ]
-            if run_ffmpeg_command(concat_cmd, debug_mode):
+            
+            if current_chunk:
+                current_chunk.export(chunk_path, 
+                                   format="wav",
+                                   parameters=["-acodec", "pcm_s16le",
+                                             "-ar", sample_rate,
+                                             "-ac", channels,
+                                             "-b:a", bitrate])
                 concatenated_files.append(chunk_path)
                 debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
-            os.remove(temp_list)
-        else:
-            # Use pydub for format conversion
-            current_chunk.export(chunk_path, 
-                               format="wav",
-                               parameters=["-acodec", "pcm_s16le",
-                                         "-ar", sample_rate,
-                                         "-ac", channels,
-                                         "-b:a", bitrate])
-            concatenated_files.append(chunk_path)
-            debug_print(f"Created final chunk {chunk_index}: {os.path.basename(chunk_path)}", debug_mode)
     
     return concatenated_files
 
