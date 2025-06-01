@@ -44,7 +44,7 @@ if platform.system() == "Darwin":
     DEFAULT_COMPUTE_TYPE = "float32"  # Changed from 'auto' to 'float32' for macOS
 else:
     DEFAULT_DEVICE = "cuda" if os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"
-    DEFAULT_COMPUTE_TYPE = "float16"
+    DEFAULT_COMPUTE_TYPE = "int8"  # Or "float32" if int8 doesn't work
 
 # Attempt to import optional dependencies and provide guidance if missing
 try:
