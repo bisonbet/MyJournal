@@ -190,26 +190,61 @@ def get_week_folder_path(base_dir, date):
     return os.path.join(base_dir, "weekly", year, month, week_folder)
 
 def collect_daily_summaries(week_folder, model_name):
-    """Collect all daily summaries for the week for a specific model."""
+    """Collect all daily summaries for the week."""
     summaries = []
-    # Look for daily summaries in the format YYYY-MM-DD-{model_name}-daily-summary.md
-    pattern = os.path.join(week_folder, "..", "..", "..", "*", f"*-{model_name}-daily-summary.md")
-    summary_files = glob.glob(pattern)
     
-    # Sort files by date
-    summary_files.sort()
+    # Get the week's date range
+    week_folder_name = os.path.basename(week_folder)
+    if not week_folder_name.startswith("WeekOf"):
+        print(f"Error: Invalid week folder name format: {week_folder_name}")
+        return summaries
+        
+    try:
+        # Extract the Sunday date from the folder name
+        sunday_date_str = week_folder_name[6:]  # Remove "WeekOf" prefix
+        sunday_date = datetime.strptime(sunday_date_str, "%Y%m%d")
+        print(f"\nProcessing week starting from Sunday {sunday_date.strftime('%Y-%m-%d')}")
+        print(f"Week folder: {week_folder}")
+        
+        # Get the base directory (journals root)
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(week_folder))))
+        print(f"Base directory: {base_dir}")
+        
+        # Look for summaries for each day of the week
+        for day_offset in range(7):
+            current_date = sunday_date + timedelta(days=day_offset)
+            year = current_date.strftime("%Y")
+            month = current_date.strftime("%B")
+            day = current_date.strftime("%m%d%Y")
+            
+            # Construct the daily directory path
+            daily_dir = os.path.join(base_dir, "daily", year, month, day)
+            print(f"\nChecking daily directory: {daily_dir}")
+            
+            if not os.path.exists(daily_dir):
+                print(f"Directory not found: {daily_dir}")
+                continue
+                
+            # Look for any markdown files that contain "transcription_summary"
+            pattern = os.path.join(daily_dir, "*transcription_summary*.md")
+            summary_files = glob.glob(pattern)
+            print(f"Found {len(summary_files)} summary files in {daily_dir}")
+            
+            for file_path in summary_files:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        summaries.append((current_date.strftime("%Y-%m-%d"), content))
+                        print(f"Added summary from: {os.path.basename(file_path)}")
+                except Exception as e:
+                    print(f"Error reading summary file {file_path}: {e}")
     
-    for file_path in summary_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # Extract the date from the filename
-                filename = os.path.basename(file_path)
-                date_str = filename.split('-')[0]
-                summaries.append((date_str, content))
-        except Exception as e:
-            print(f"Error reading summary file {file_path}: {e}")
+    except Exception as e:
+        print(f"Error processing week folder {week_folder}: {e}")
     
+    # Sort summaries by date
+    summaries.sort(key=lambda x: x[0])
+    print(f"\nTotal summaries collected: {len(summaries)}")
     return summaries
 
 def summarize_week(daily_summaries, tokenizer_for_counting, ollama_url, ollama_model,
@@ -478,6 +513,7 @@ def main():
 
     # Get the week folder path
     week_folder = get_week_folder_path(args.base_dir, input_date)
+    print(f"\nCreating weekly summary in: {week_folder}")
     os.makedirs(week_folder, exist_ok=True)
 
     for model_name_for_iteration in models_to_run:
@@ -516,6 +552,7 @@ def main():
         sanitized_model_name = model_name_for_iteration.replace(":", "_").replace("/", "_")
         output_filename = f"weekly-summary-{sanitized_model_name}.md"
         output_path = os.path.join(week_folder, output_filename)
+        print(f"\nSaving weekly summary to: {output_path}")
 
         try:
             with open(output_path, "w", encoding="utf-8") as f:
@@ -523,8 +560,7 @@ def main():
                 f.write(f"# Week of {input_date.strftime('%Y-%m-%d')}\n\n")
                 cleaned_summary = remove_thinking_tokens(final_summary)
                 f.write(cleaned_summary)
-            if args.DEBUG:
-                print(f"\nWeekly summary for {model_name_for_iteration} saved to {output_path}")
+            print(f"Successfully saved weekly summary to: {output_path}")
         except Exception as e:
             print(f"Error saving weekly summary for {model_name_for_iteration} to file '{output_path}': {e}")
 
