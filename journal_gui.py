@@ -83,10 +83,13 @@ class JournalViewer:
         daily_path = f"daily/{year}/{month}/{day}"
         paths.append(("Daily", daily_path))
         
-        # If it's Sunday, add weekly path
+        # If it's Sunday, add weekly path using the previous Saturday's date
         if selected_date.weekday() == 6:  # Sunday is 6
-            week_start = selected_date
-            week_path = f"weekly/{year}/{month}/WeekOf{week_start.strftime('%m%d%Y')}"
+            week_end = selected_date - timedelta(days=1)  # Go back 1 day to get to previous Saturday
+            week_year = str(week_end.year)  # Use the year from the Saturday date
+            week_month = week_end.strftime("%B")  # Use the month from the Saturday date
+            # Ensure we use a 4-digit year in the folder name
+            week_path = f"weekly/{week_year}/{week_month}/WeekEnding{week_end.strftime('%Y%m%d')}"
             paths.append(("Weekly", week_path))
         
         # If it's first day of month, add monthly path
@@ -345,63 +348,66 @@ class JournalViewer:
 
             if script_name == "Generate Daily Summary":
                 if directory_type != "daily":
-                    return "Please select a Daily directory"
+                    return "Please select a Daily directory", None
                 # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
                 if len(path_parts) >= 4:
                     date_str = path_parts[-1]  # Get the MMDDYYYY part
                     try:
                         date = datetime.strptime(date_str, "%m%d%Y")
-                        return f"Transcribe, Diarize and Summarize sound files for {date.strftime('%B %d, %Y')}"
+                        return f"Transcribe, Diarize and Summarize sound files for {date.strftime('%B %d, %Y')}", None
                     except ValueError:
-                        return "Invalid date format in path"
-                return "Invalid path format for daily summary"
+                        return "Invalid date format in path", None
+                return "Invalid path format for daily summary", None
 
             elif script_name == "Generate Weekly Summary":
                 if directory_type != "weekly":
                     return "Please select a Weekly directory"
-                # Extract week from path (format: weekly/YYYY/Month/WeekOfMMDDYYYY)
+                # Extract week from path (format: weekly/YYYY/Month/WeekEndingYYYYMMDD)
                 if len(path_parts) >= 4:
-                    week_str = path_parts[-1]  # Get the WeekOfMMDDYYYY part
-                    if week_str.startswith("WeekOf"):
+                    week_str = path_parts[-1]  # Get the WeekEndingYYYYMMDD part
+                    if week_str.startswith("WeekEnding"):
                         try:
-                            date_str = week_str[6:]  # Remove "WeekOf" prefix
-                            date = datetime.strptime(date_str, "%m%d%Y")
+                            date_str = week_str[11:]  # Remove "WeekEnding" prefix
+                            # Get the year from the path parts instead
+                            year = int(path_parts[1])  # Get year from weekly/YYYY/Month/...
+                            date_str = f"{year}{date_str[4:]}"  # Replace the year in the date string
+                            date = datetime.strptime(date_str, "%Y%m%d")
                             return f"Create Summary of Week of {date.strftime('%B %d, %Y')}"
                         except ValueError:
-                            return "Invalid date format in week path"
+                            return "Invalid date format in path"
                 return "Invalid path format for weekly summary"
 
             elif script_name == "Generate Monthly Summary":
                 if directory_type != "monthly":
-                    return "Please select a Monthly directory"
+                    return "Please select a Monthly directory", None
                 # Extract month from path (format: monthly/YYYY/Month)
                 if len(path_parts) >= 3:
                     month = path_parts[-1]  # Get the Month name
                     year = path_parts[-2]   # Get the Year
-                    return f"Create Summary of {month} {year}"
-                return "Invalid path format for monthly summary"
+                    return f"Create Summary of {month} {year}", None
+                return "Invalid path format for monthly summary", None
 
             elif script_name == "Export to PDF":
-                return "Export selected files to PDF"
+                return "Export selected files to PDF", None
 
             elif script_name == "Word Cloud Analysis":
                 if directory_type != "daily":
-                    return "Please select a Daily directory"
+                    return "Please select a Daily directory", None
                 # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
                 if len(path_parts) >= 4:
                     date_str = path_parts[-1]  # Get the MMDDYYYY part
                     try:
                         date = datetime.strptime(date_str, "%m%d%Y")
-                        return f"Generate word cloud visualization from transcription for {date.strftime('%B %d, %Y')}"
+                        return f"Generate word cloud visualization from transcription for {date.strftime('%B %d, %Y')}", None
                     except ValueError:
-                        return "Invalid date format in path"
-                return "Invalid path format for word cloud analysis"
+                        return "Invalid date format in path", None
+                return "Invalid path format for word cloud analysis", None
 
-            return "No description available for this script"
+            return "No description available for this script", None
 
         except Exception as e:
             logger.error(f"Error generating script description: {str(e)}")
-            return "Error generating description"
+            return "Error generating description", None
 
     def _find_most_recent_date_with_files(self):
         """Find the most recent date that has files in its directory."""
@@ -420,6 +426,10 @@ class JournalViewer:
 def run_script(script_name, current_path, file1, file2=None, journal_viewer=None):
     if not script_name:
         return "No script selected", None
+        
+    # Check if a script is already running
+    if run_script.current_process is not None:
+        return "A script is already running. Please wait for it to complete or cancel it.", None
         
     try:
         if script_name == "Export to PDF":
@@ -453,27 +463,36 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                 logger.info(f"Running diarize-audio.py with path: {full_path}")
                 
                 # Run diarize-audio.py with the full path
-                result = subprocess.run(
+                run_script.current_process = subprocess.Popen(
                     [sys.executable, "diarize-audio.py", full_path],
-                    capture_output=True,
-                    text=True,
-                    check=True
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
                 )
                 
-                # Log all output
-                if result.stdout:
-                    logger.info(f"Script stdout:\n{result.stdout}")
-                if result.stderr:
-                    logger.warning(f"Script stderr:\n{result.stderr}")
-                    
-                return f"Daily summary generated successfully:\n{result.stdout}", None
+                # Read output in real-time
+                while True:
+                    output = run_script.current_process.stdout.readline()
+                    if output == '' and run_script.current_process.poll() is not None:
+                        break
+                    if output:
+                        logger.info(output.strip())
                 
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Error generating daily summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
-                logger.error(error_msg)
-                return error_msg, None
+                # Get any remaining stderr
+                stderr_output = run_script.current_process.stderr.read()
+                if stderr_output:
+                    logger.warning(stderr_output.strip())
+                
+                return_code = run_script.current_process.poll()
+                run_script.current_process = None  # Clear the process
+                
+                if return_code == 0:
+                    return "Daily summary generated successfully", None
+                else:
+                    return f"Error generating daily summary (return code: {return_code})", None
                 
             except Exception as e:
+                run_script.current_process = None  # Clear the process on error
                 error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
                 logger.error(error_msg, exc_info=True)
                 return error_msg, None
@@ -484,33 +503,57 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                 return "No directory selected", None
                 
             try:
-                # Extract date from the path (format: weekly/YYYY/Month/WeekOfMMDDYYYY)
+                # Extract date from the path (format: weekly/YYYY/Month/WeekEndingYYYYMMDD)
                 path_parts = current_path.split('/')
                 if len(path_parts) >= 4:
-                    week_str = path_parts[-1]  # Get the WeekOfMMDDYYYY part
-                    if week_str.startswith("WeekOf"):
-                        date_str = week_str[6:]  # Remove "WeekOf" prefix
+                    week_str = path_parts[-1]  # Get the WeekEndingYYYYMMDD part
+                    if week_str.startswith("WeekEnding"):
+                        date_str = week_str[11:]  # Remove "WeekEnding" prefix
                         try:
-                            # Convert MMDDYYYY to YYYY-MM-DD format
-                            date_obj = datetime.strptime(date_str, "%m%d%Y")
+                            # Get the year from the path parts
+                            year = int(path_parts[1])  # Get year from weekly/YYYY/Month/...
+                            date_str = f"{year}{date_str[4:]}"  # Replace the year in the date string
+                            date_obj = datetime.strptime(date_str, "%Y%m%d")
+                            
+                            # Validate year is between 2024 and 2099
+                            year = date_obj.year
+                            if year < 2024 or year > 2099:
+                                error_msg = f"Invalid year: {year}. Year must be between 2024 and 2099."
+                                logger.error(error_msg)
+                                return error_msg, None
+                            
+                            # Pass the Saturday date directly to summarize_week.py
                             formatted_date = date_obj.strftime("%Y-%m-%d")
                             
-                            # Run summarize_week.py directly with the date
+                            # Run summarize_week.py with the correct base directory
                             logger.info(f"Running summarize_week.py for date: {formatted_date}")
-                            result = subprocess.run(
-                                [sys.executable, "summarize_week.py", formatted_date, "--base_dir", str(journal_viewer.root_dir)],
-                                capture_output=True,
-                                text=True,
-                                check=True
+                            run_script.current_process = subprocess.Popen(
+                                [sys.executable, "summarize_week.py", formatted_date, "--base_dir", "journals"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
                             )
                             
-                            # Log all output
-                            if result.stdout:
-                                logger.info(f"Script stdout:\n{result.stdout}")
-                            if result.stderr:
-                                logger.warning(f"Script stderr:\n{result.stderr}")
-                                
-                            return f"Weekly summary generated successfully:\n{result.stdout}", None
+                            # Read output in real-time
+                            while True:
+                                output = run_script.current_process.stdout.readline()
+                                if output == '' and run_script.current_process.poll() is not None:
+                                    break
+                                if output:
+                                    logger.info(output.strip())
+                            
+                            # Get any remaining stderr
+                            stderr_output = run_script.current_process.stderr.read()
+                            if stderr_output:
+                                logger.warning(stderr_output.strip())
+                            
+                            return_code = run_script.current_process.poll()
+                            run_script.current_process = None  # Clear the process
+                            
+                            if return_code == 0:
+                                return "Weekly summary generated successfully", None
+                            else:
+                                return f"Error generating weekly summary (return code: {return_code})", None
                             
                         except ValueError as e:
                             error_msg = f"Invalid date format in path: {e}"
@@ -525,12 +568,8 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                     logger.error(error_msg)
                     return error_msg, None
                     
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Error generating weekly summary:\nCommand: {' '.join(e.cmd)}\nExit code: {e.returncode}\nOutput: {e.stdout}\nError: {e.stderr}"
-                logger.error(error_msg)
-                return error_msg, None
-                
             except Exception as e:
+                run_script.current_process = None  # Clear the process on error
                 error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
                 logger.error(error_msg, exc_info=True)
                 return error_msg, None
@@ -567,12 +606,40 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
         return f"Running {script_name}...", None
         
     except Exception as e:
+        run_script.current_process = None  # Clear the process on error
         error_msg = f"Error running script: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return error_msg, None
 
-# Initialize the temp_dir attribute for the run_script function
+# Initialize the attributes for the run_script function
 run_script.temp_dir = None
+run_script.current_process = None
+
+def cancel_current_script():
+    """Cancel the currently running script."""
+    if run_script.current_process is not None:
+        try:
+            # Send SIGTERM to the process and its children
+            import psutil
+            parent = psutil.Process(run_script.current_process.pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                child.terminate()
+            parent.terminate()
+            
+            # Wait for processes to terminate
+            gone, alive = psutil.wait_procs([parent] + children, timeout=3)
+            
+            # Force kill if still alive
+            for p in alive:
+                p.kill()
+            
+            run_script.current_process = None
+            return "Script cancelled successfully"
+        except Exception as e:
+            logger.error(f"Error cancelling script: {e}")
+            return f"Error cancelling script: {e}"
+    return "No script is currently running"
 
 def create_interface(journal_viewer):
     with gr.Blocks(title="MyJournal", theme=gr.themes.Soft(), css="""
@@ -645,6 +712,22 @@ def create_interface(journal_viewer):
             padding: 10px;
             background: var(--background-fill-secondary);
             border-radius: 8px;
+        }
+        .cancel-button {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .cancel-button:hover {
+            background-color: #c82333;
+        }
+        .cancel-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
         }
     """) as interface:
         # Top bar with title and toggle
@@ -795,7 +878,9 @@ def create_interface(journal_viewer):
                         value="Select a script to see its description",
                         show_label=True
                     )
-                    run_script_button = gr.Button("Run Script")
+                    with gr.Row():
+                        run_script_button = gr.Button("Run Script")
+                        cancel_script_button = gr.Button("Cancel Script", elem_classes="cancel-button", visible=False)
                     script_status = gr.Textbox(label="Script Status", interactive=False)
                     pdf_download = gr.File(label="Download PDF", visible=False)
             
@@ -910,7 +995,11 @@ def create_interface(journal_viewer):
                     return datetime.now() - timedelta(days=1)
                     
                 month_num = months.index(month) + 1
-                return datetime(int(year), month_num, int(day))
+                # Ensure we have a 4-digit year
+                year = int(year)
+                if len(str(year)) != 4:
+                    year = 2000 + year
+                return datetime(year, month_num, int(day))
             except Exception as e:
                 logger.error(f"Error creating date: {str(e)}")
                 return datetime.now() - timedelta(days=1)
@@ -1010,8 +1099,33 @@ def create_interface(journal_viewer):
             fn=lambda *args: run_script(*args, journal_viewer=journal_viewer),
             inputs=[script_dropdown, directory_radio, file_dropdown, file_dropdown2],
             outputs=[script_status, pdf_download]
+        ).then(
+            fn=lambda status: gr.update(visible=run_script.current_process is not None),
+            inputs=[script_status],
+            outputs=[cancel_script_button]
         )
 
+        # Connect the cancel button
+        cancel_script_button.click(
+            fn=cancel_current_script,
+            inputs=[],
+            outputs=[script_status]
+        ).then(
+            fn=lambda: gr.update(visible=False),
+            inputs=[],
+            outputs=[cancel_script_button]
+        )
+
+        # Update script dropdown interactivity based on whether a script is running
+        def update_script_dropdown_interactivity():
+            return gr.update(interactive=run_script.current_process is None)
+
+        script_status.change(
+            fn=update_script_dropdown_interactivity,
+            inputs=[],
+            outputs=[script_dropdown]
+        )
+        
         # Show/hide PDF download based on script status
         def update_pdf_download(status, pdf_path):
             if pdf_path and os.path.exists(pdf_path):

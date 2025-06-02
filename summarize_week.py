@@ -12,13 +12,13 @@ import glob
 
 # --- Configuration ---
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen3:30b-a3b"
+DEFAULT_OLLAMA_MODEL = "phi4-mini:latest"
 
 # Initialize logger
 logger = setup_logging('summarize_week', False)  # Default to non-debug mode
 
 MODELS_TO_RUN_LIST = [
-    "qwen3:30b-a3b"               
+    "phi4-mini:latest"               
 ]
 
 # Context window sizes for different summarization passes
@@ -181,12 +181,20 @@ def remove_thinking_tokens(text):
     return text
 
 def get_week_folder_path(base_dir, date):
-    """Generate the week folder path based on the date."""
-    year = date.strftime("%Y")
-    month = date.strftime("%m")
-    # Find the Sunday of the week
-    sunday = date - timedelta(days=date.weekday() + 1)
-    week_folder = f"WeekOf{sunday.strftime('%Y%m%d')}"
+    """Generate the week folder path based on the date.
+    The folder will be named 'WeekEndingYYYYMMDD' where the date is the Saturday of the week being summarized.
+    """
+    # Calculate days until next Saturday
+    days_until_saturday = (5 - date.weekday()) % 7  # 5 is Saturday (0 is Monday)
+    if days_until_saturday == 0:  # If today is Saturday
+        saturday = date
+    else:
+        saturday = date + timedelta(days=days_until_saturday)
+    
+    # Ensure we're using the full 4-digit year
+    year = str(saturday.year)  # Use str() to ensure 4-digit year
+    month = saturday.strftime("%m")
+    week_folder = f"WeekEnding{saturday.strftime('%Y%m%d')}"
     return os.path.join(base_dir, "weekly", year, month, week_folder)
 
 def collect_daily_summaries(week_folder, model_name):
@@ -195,15 +203,27 @@ def collect_daily_summaries(week_folder, model_name):
     
     # Get the week's date range
     week_folder_name = os.path.basename(week_folder)
-    if not week_folder_name.startswith("WeekOf"):
+    if not week_folder_name.startswith("WeekEnding"):
         print(f"Error: Invalid week folder name format: {week_folder_name}")
         return summaries
         
     try:
-        # Extract the Sunday date from the folder name
-        sunday_date_str = week_folder_name[6:]  # Remove "WeekOf" prefix
-        sunday_date = datetime.strptime(sunday_date_str, "%Y%m%d")
-        print(f"\nProcessing week starting from Sunday {sunday_date.strftime('%Y-%m-%d')}")
+        # Extract the Saturday date from the folder name
+        saturday_date_str = week_folder_name[11:]  # Remove "WeekEnding" prefix
+        # Get the year from the path parts instead
+        year = int(os.path.basename(os.path.dirname(os.path.dirname(week_folder))))  # Get year from weekly/YYYY/Month/...
+        saturday_date_str = f"{year}{saturday_date_str[4:]}"  # Replace the year in the date string
+        saturday_date = datetime.strptime(saturday_date_str, "%Y%m%d")
+        
+        # Validate year is between 2024 and 2099
+        year = saturday_date.year
+        if year < 2024 or year > 2099:
+            print(f"Error: Invalid year: {year}. Year must be between 2024 and 2099.")
+            return summaries
+        
+        # Calculate the Sunday date (start of the week being summarized)
+        sunday_date = saturday_date - timedelta(days=6)
+        print(f"\nProcessing week from Sunday {sunday_date.strftime('%Y-%m-%d')} through Saturday {saturday_date.strftime('%Y-%m-%d')}")
         print(f"Week folder: {week_folder}")
         
         # Get the base directory (journals root)
@@ -213,7 +233,7 @@ def collect_daily_summaries(week_folder, model_name):
         # Look for summaries for each day of the week
         for day_offset in range(7):
             current_date = sunday_date + timedelta(days=day_offset)
-            year = current_date.strftime("%Y")
+            year = str(current_date.year)  # Use str() to ensure 4-digit year
             month = current_date.strftime("%B")
             day = current_date.strftime("%m%d%Y")
             
@@ -245,6 +265,8 @@ def collect_daily_summaries(week_folder, model_name):
     # Sort summaries by date
     summaries.sort(key=lambda x: x[0])
     print(f"\nTotal summaries collected: {len(summaries)}")
+    if not summaries:
+        print(f"No daily summaries found in the week of {sunday_date.strftime('%Y-%m-%d')}")
     return summaries
 
 def summarize_week(daily_summaries, tokenizer_for_counting, ollama_url, ollama_model,
@@ -266,15 +288,35 @@ IMPORTANT GUIDELINES:
 * Preserve all reminders, notes-to-self, and lookups from the original summaries
 * Identify any patterns in decision-making or problem-solving approaches
 
+Your response MUST be in well-formatted Markdown. Use:
+* **Bold text** for emphasis
+* Bullet points (`*` or `-`) for lists
+* Headers (`##` for main sections, `###` for subsections)
+* Code blocks (```) for any technical content
+* Tables where appropriate
+
 Please analyze this excerpt and provide a detailed summary focusing on:
 
-* **Major Themes & Patterns:** What topics, concerns, or activities appear consistently across multiple days?
-* **Key Decisions & Their Evolution:** How have important decisions evolved or been refined over the week?
-* **Recurring Questions & Concerns:** What questions or uncertainties have persisted or evolved?
-* **Action Items & Progress:** What tasks were completed, started, or carried forward? Track their progress.
-* **Notable Insights & Breakthroughs:** What significant realizations or breakthroughs occurred?
-* **Critical Information & Facts:** What key information emerged that's important to remember?
-* **REMINDERS & NOTES-TO-SELF:** CRITICALLY IMPORTANT: Preserve all items explicitly labeled as reminders, notes-to-self, or lookups. These must be passed on.
+## Major Themes & Patterns
+* What topics, concerns, or activities appear consistently across multiple days?
+
+## Key Decisions & Their Evolution
+* How have important decisions evolved or been refined over the week?
+
+## Recurring Questions & Concerns
+* What questions or uncertainties have persisted or evolved?
+
+## Action Items & Progress
+* What tasks were completed, started, or carried forward? Track their progress.
+
+## Notable Insights & Breakthroughs
+* What significant realizations or breakthroughs occurred?
+
+## Critical Information & Facts
+* What key information emerged that's important to remember?
+
+## REMINDERS & NOTES-TO-SELF
+* CRITICALLY IMPORTANT: Preserve all items explicitly labeled as reminders, notes-to-self, or lookups. These must be passed on.
 
 Daily Summaries Excerpt:
 ---
@@ -287,23 +329,43 @@ Summary of Excerpt (including any REMINDER/NOTE-TO-SELF/LOOKUP items):
 You are creating a comprehensive weekly summary by synthesizing multiple summaries of daily summaries. Your goal is to create a coherent, well-structured overview of the entire week that highlights patterns, progress, and important information.
 
 The output MUST be in well-formatted Markdown, designed for maximum readability and visual appeal. Use:
-* **Main Headings (e.g., ## Weekly Overview, ## Major Themes)**
-* **Sub-headings (e.g., ### Progress on Project X, ### Recurring Concerns)**
+* **Main Headings (##)** for major sections
+* **Sub-headings (###)** for subsections
 * **Bullet points (`*` or `-`)** for lists
 * **Bold text (`**text**`)** for emphasis
 * **Numbered lists** for sequential items
+* **Tables** for structured data
+* **Code blocks (```)** for any technical content
+* **Horizontal rules (---)** to separate major sections
 
 In this weekly synthesis, focus on:
 
-* **Weekly Narrative & Flow:** How did the week progress? What was the overall arc?
-* **Cross-Day Themes & Patterns:** What topics, concerns, or activities appeared consistently?
-* **Decision Evolution:** How did key decisions evolve or get refined?
-* **Progress Tracking:** What was started, completed, or carried forward?
-* **Recurring Questions & Concerns:** What issues persisted or evolved?
-* **Breakthroughs & Insights:** What significant realizations occurred?
-* **CRITICAL: Reminders & Follow-ups:** Create a dedicated section for all reminders, notes-to-self, and lookups. Preserve these exactly as they appear in the daily summaries.
-* **Pattern Recognition:** Identify any patterns in how problems were approached or solved.
-* **Information Synthesis:** Combine related information from different days into coherent insights.
+## Weekly Narrative & Flow
+* How did the week progress? What was the overall arc?
+
+## Cross-Day Themes & Patterns
+* What topics, concerns, or activities appeared consistently?
+
+## Decision Evolution
+* How did key decisions evolve or get refined?
+
+## Progress Tracking
+* What was started, completed, or carried forward?
+
+## Recurring Questions & Concerns
+* What issues persisted or evolved?
+
+## Breakthroughs & Insights
+* What significant realizations occurred?
+
+## Reminders & Follow-ups
+* CRITICAL: Create a dedicated section for all reminders, notes-to-self, and lookups. Preserve these exactly as they appear in the daily summaries.
+
+## Pattern Recognition
+* Identify any patterns in how problems were approached or solved.
+
+## Information Synthesis
+* Combine related information from different days into coherent insights.
 
 The aim is to produce a high-level yet detailed digest that allows someone to quickly understand the week's key events, patterns, and important outcomes, while preserving all critical reminders and follow-up items.
 
@@ -516,6 +578,12 @@ def main():
     print(f"\nCreating weekly summary in: {week_folder}")
     os.makedirs(week_folder, exist_ok=True)
 
+    # Collect daily summaries once for all models
+    daily_summaries = collect_daily_summaries(week_folder, None)
+    if not daily_summaries:
+        print(f"No daily summaries found in the week of {input_date.strftime('%Y-%m-%d')}")
+        return
+
     for model_name_for_iteration in models_to_run:
         if args.DEBUG:
             print(f"\n\n{'='*20} PROCESSING WITH MODEL: {model_name_for_iteration} {'='*20}")
@@ -526,12 +594,6 @@ def main():
             print(f"        Final Pass (Ctx: {args.final_pass_ollama_num_ctx}, MaxGen: {args.final_pass_max_new_tokens})")
             print(f"        Chunk Ratio: {args.target_chunk_ratio}, Overlap: {args.overlap_tokens}")
             print(f"        DEBUG mode enabled: Intermediate files will be saved.")
-
-        # Collect daily summaries for this model
-        daily_summaries = collect_daily_summaries(week_folder, model_name_for_iteration)
-        if not daily_summaries:
-            print(f"No daily summaries found for model {model_name_for_iteration} in the week of {input_date.strftime('%Y-%m-%d')}")
-            continue
 
         final_summary = summarize_week(
             daily_summaries, tokenizer_for_counting,
@@ -555,9 +617,13 @@ def main():
         print(f"\nSaving weekly summary to: {output_path}")
 
         try:
+            # Calculate the date range for the title
+            saturday_date = datetime.strptime(os.path.basename(week_folder)[11:], "%Y%m%d")
+            sunday_date = saturday_date - timedelta(days=6)
+            
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(f"# Weekly Summary from model: {model_name_for_iteration}\n\n")
-                f.write(f"# Week of {input_date.strftime('%Y-%m-%d')}\n\n")
+                f.write(f"# Weekly Summary of the Week of Sunday, {sunday_date.strftime('%B %d, %Y')} through Saturday, {saturday_date.strftime('%B %d, %Y')}\n\n")
                 cleaned_summary = remove_thinking_tokens(final_summary)
                 f.write(cleaned_summary)
             print(f"Successfully saved weekly summary to: {output_path}")

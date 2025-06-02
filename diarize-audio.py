@@ -6,7 +6,7 @@ import argparse
 import shutil
 import glob
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from logging_config import setup_logging
 
@@ -287,6 +287,49 @@ def convert_wavs_to_mp3(abs_wav_directory, is_orchestrator_debug_mode):
         return False
     return True
 
+def create_temp_files_for_future_dates(base_dir, current_date):
+    """Create temporary files in the next week's and next month's directories."""
+    try:
+        # Calculate next week's Sunday (start of week)
+        days_until_next_sunday = (6 - current_date.weekday()) % 7
+        if days_until_next_sunday == 0:
+            days_until_next_sunday = 7  # If today is Sunday, get next Sunday
+        next_sunday = current_date + timedelta(days=days_until_next_sunday)
+        
+        # Create next week's directory structure
+        year = next_sunday.strftime("%Y")
+        month = next_sunday.strftime("%B")
+        week_folder = f"WeekOf{next_sunday.strftime('%m%d%Y')}"
+        next_week_path = os.path.join(base_dir, "weekly", year, month, week_folder)
+        os.makedirs(next_week_path, exist_ok=True)
+        
+        # Create tmp.txt in next week's directory
+        tmp_file_path = os.path.join(next_week_path, "tmp.txt")
+        with open(tmp_file_path, "w", encoding="utf-8") as f:
+            f.write("ignore this file\n")
+        logger.info(f"Created temporary file in next week's directory: {tmp_file_path}")
+        
+        # Calculate next month's directory
+        if current_date.month == 12:
+            next_month_year = current_date.year + 1
+            next_month = 1
+        else:
+            next_month_year = current_date.year
+            next_month = current_date.month + 1
+            
+        next_month_name = datetime(next_month_year, next_month, 1).strftime("%B")
+        next_month_path = os.path.join(base_dir, "monthly", str(next_month_year), next_month_name)
+        os.makedirs(next_month_path, exist_ok=True)
+        
+        # Create tmp.txt in next month's directory
+        tmp_file_path = os.path.join(next_month_path, "tmp.txt")
+        with open(tmp_file_path, "w", encoding="utf-8") as f:
+            f.write("ignore this file\n")
+        logger.info(f"Created temporary file in next month's directory: {tmp_file_path}")
+        
+    except Exception as e:
+        logger.error(f"Error creating temporary files for future dates: {e}")
+
 def main():
     """Main function to orchestrate the script execution."""
     parser = argparse.ArgumentParser(
@@ -327,6 +370,11 @@ def main():
         sys.exit(1)
 
     abs_wav_directory = os.path.abspath(args.wav_directory)
+    
+    # Create temporary files for future dates
+    base_dir = os.path.dirname(os.path.dirname(abs_wav_directory))  # Go up two levels to get to journals root
+    current_date = datetime.now()
+    create_temp_files_for_future_dates(base_dir, current_date)
 
     logger.info("Starting diarization, summarization, and MP3 conversion orchestration...")
     logger.info(f"Mode: {'DEBUG' if is_orchestrator_debug_mode else 'PRODUCTION'}")
