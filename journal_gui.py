@@ -323,7 +323,29 @@ class JournalViewer:
                 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
                 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
                 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can',
-                'will', 'just', 'don', 'should', 'now'
+                'will', 'just', 'don', 'should', 'now',
+                # Additional common words
+                'like', 'for', 'at', 'by', 'from', 'up', 'about', 'into', 'over', 'after',
+                'beneath', 'under', 'above', 'across', 'through', 'to', 'towards', 'upon',
+                'of', 'off', 'onto', 'out', 'outside', 'over', 'past', 'since', 'than',
+                'till', 'until', 'unto', 'upon', 'with', 'within', 'without',
+                # Common filler words
+                'um', 'uh', 'er', 'ah', 'like', 'you know', 'i mean', 'sort of', 'kind of',
+                'basically', 'actually', 'literally', 'honestly', 'anyway', 'anyways',
+                'right', 'well', 'so', 'now', 'then', 'just', 'really', 'very', 'quite',
+                'pretty', 'much', 'many', 'lot', 'lots', 'few', 'several', 'some',
+                # Common conjunctions and connectors
+                'although', 'though', 'even though', 'while', 'whereas', 'despite',
+                'in spite of', 'however', 'nevertheless', 'nonetheless', 'still',
+                'yet', 'even so', 'on the other hand', 'in contrast', 'conversely',
+                'instead', 'rather', 'alternatively', 'meanwhile', 'simultaneously',
+                'subsequently', 'afterward', 'afterwards', 'thereafter', 'thereby',
+                'therefore', 'thus', 'consequently', 'accordingly', 'hence', 'as a result',
+                'in addition', 'moreover', 'furthermore', 'besides', 'also', 'too',
+                'as well', 'not only', 'but also', 'both', 'either', 'neither',
+                'whether', 'if', 'unless', 'provided', 'providing', 'assuming',
+                'supposing', 'in case', 'lest', 'since', 'because', 'as', 'for',
+                'in order to', 'so as to', 'so that', 'in order that'
             }
 
             # Create a temporary directory for the word cloud
