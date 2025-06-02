@@ -397,16 +397,16 @@ class JournalViewer:
 
             if script_name == "Generate Daily Summary":
                 if directory_type != "daily":
-                    return "Please select a Daily directory", None
+                    return "Please select a Daily directory"
                 # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
                 if len(path_parts) >= 4:
                     date_str = path_parts[-1]  # Get the MMDDYYYY part
                     try:
                         date = datetime.strptime(date_str, "%m%d%Y")
-                        return f"Transcribe, Diarize and Summarize sound files for {date.strftime('%B %d, %Y')}", None
+                        return f"Transcribe, Diarize and Summarize sound files for {date.strftime('%B %d, %Y')}"
                     except ValueError:
-                        return "Invalid date format in path", None
-                return "Invalid path format for daily summary", None
+                        return "Invalid date format in path"
+                return "Invalid path format for daily summary"
 
             elif script_name == "Generate Weekly Summary":
                 if directory_type != "weekly":
@@ -428,35 +428,35 @@ class JournalViewer:
 
             elif script_name == "Generate Monthly Summary":
                 if directory_type != "monthly":
-                    return "Please select a Monthly directory", None
+                    return "Please select a Monthly directory"
                 # Extract month from path (format: monthly/YYYY/Month)
                 if len(path_parts) >= 3:
                     month = path_parts[-1]  # Get the Month name
                     year = path_parts[-2]   # Get the Year
-                    return f"Create Summary of {month} {year}", None
-                return "Invalid path format for monthly summary", None
+                    return f"Create Summary of {month} {year}"
+                return "Invalid path format for monthly summary"
 
             elif script_name == "Export to PDF":
-                return "Export selected files to PDF", None
+                return "Export selected files to PDF"
 
             elif script_name == "Word Cloud Analysis":
                 if directory_type != "daily":
-                    return "Please select a Daily directory", None
+                    return "Please select a Daily directory"
                 # Extract date from path (format: daily/YYYY/Month/MMDDYYYY)
                 if len(path_parts) >= 4:
                     date_str = path_parts[-1]  # Get the MMDDYYYY part
                     try:
                         date = datetime.strptime(date_str, "%m%d%Y")
-                        return f"Generate word cloud visualization from transcription for {date.strftime('%B %d, %Y')}", None
+                        return f"Generate word cloud visualization from transcription for {date.strftime('%B %d, %Y')}"
                     except ValueError:
-                        return "Invalid date format in path", None
-                return "Invalid path format for word cloud analysis", None
+                        return "Invalid date format in path"
+                return "Invalid path format for word cloud analysis"
 
-            return "No description available for this script", None
+            return "No description available for this script"
 
         except Exception as e:
             logger.error(f"Error generating script description: {str(e)}")
-            return "Error generating description", None
+            return "Error generating description"
 
     def _find_most_recent_date_with_files(self):
         """Find the most recent date that has files in its directory."""
