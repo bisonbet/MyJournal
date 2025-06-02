@@ -301,18 +301,45 @@ class JournalViewer:
             text = re.sub(r'[^\w\s]', ' ', text)  # Remove special characters
             text = ' '.join(text.split())  # Normalize whitespace
 
+            # Define stop words to exclude
+            stop_words = {
+                'a', 'an', 'the', 'and', 'or', 'but', 'if', 'because', 'as', 'what',
+                'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you',
+                'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself',
+                'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them',
+                'their', 'theirs', 'themselves', 'this', 'that', 'these', 'those', 'am',
+                'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+                'having', 'do', 'does', 'did', 'doing', 'would', 'should', 'could', 'ought',
+                'i\'m', 'you\'re', 'he\'s', 'she\'s', 'it\'s', 'we\'re', 'they\'re',
+                'i\'ve', 'you\'ve', 'we\'ve', 'they\'ve', 'i\'d', 'you\'d', 'he\'d',
+                'she\'d', 'we\'d', 'they\'d', 'i\'ll', 'you\'ll', 'he\'ll', 'she\'ll',
+                'we\'ll', 'they\'ll', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t', 'hasn\'t',
+                'haven\'t', 'hadn\'t', 'doesn\'t', 'don\'t', 'didn\'t', 'won\'t', 'wouldn\'t',
+                'shan\'t', 'shouldn\'t', 'can\'t', 'cannot', 'couldn\'t', 'mustn\'t', 'let\'s',
+                'that\'s', 'who\'s', 'what\'s', 'here\'s', 'there\'s', 'when\'s', 'where\'s',
+                'why\'s', 'how\'s', 'to', 'of', 'with', 'by', 'about', 'against', 'between',
+                'into', 'through', 'during', 'before', 'after', 'above', 'below', 'from',
+                'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further',
+                'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+                'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+                'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can',
+                'will', 'just', 'don', 'should', 'now'
+            }
+
             # Create a temporary directory for the word cloud
             temp_dir = tempfile.mkdtemp()
             wordcloud_path = Path(temp_dir) / "wordcloud.png"
 
-            # Generate the word cloud
+            # Generate the word cloud with stop words and minimum length filter
             wordcloud = WordCloud(
                 width=1200,
                 height=800,
                 background_color='white',
                 max_words=200,
                 contour_width=3,
-                contour_color='steelblue'
+                contour_color='steelblue',
+                stopwords=stop_words,
+                min_word_length=3  # Exclude words shorter than 3 characters
             ).generate(text)
 
             # Save the word cloud
