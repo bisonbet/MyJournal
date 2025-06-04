@@ -345,7 +345,71 @@ class JournalViewer:
                 'as well', 'not only', 'but also', 'both', 'either', 'neither',
                 'whether', 'if', 'unless', 'provided', 'providing', 'assuming',
                 'supposing', 'in case', 'lest', 'since', 'because', 'as', 'for',
-                'in order to', 'so as to', 'so that', 'in order that'
+                'in order to', 'so as to', 'so that', 'in order that',
+                # Additional common words to exclude
+                'know', 'going', 'think', 'one', 'want', 'need', 'use', 'make', 'made',
+                'making', 'come', 'comes', 'coming', 'came', 'get', 'gets', 'getting',
+                'got', 'take', 'takes', 'taking', 'took', 'see', 'sees', 'seeing', 'saw',
+                'look', 'looks', 'looking', 'looked', 'feel', 'feels', 'feeling', 'felt',
+                'say', 'says', 'saying', 'said', 'tell', 'tells', 'telling', 'told',
+                'ask', 'asks', 'asking', 'asked', 'work', 'works', 'working', 'worked',
+                'seem', 'seems', 'seeming', 'seemed', 'try', 'tries', 'trying', 'tried',
+                'call', 'calls', 'calling', 'called', 'move', 'moves', 'moving', 'moved',
+                'live', 'lives', 'living', 'lived', 'stand', 'stands', 'standing', 'stood',
+                'turn', 'turns', 'turning', 'turned', 'start', 'starts', 'starting', 'started',
+                'help', 'helps', 'helping', 'helped', 'talk', 'talks', 'talking', 'talked',
+                'appear', 'appears', 'appearing', 'appeared', 'buy', 'buys', 'buying', 'bought',
+                'wait', 'waits', 'waiting', 'waited', 'serve', 'serves', 'serving', 'served',
+                'die', 'dies', 'dying', 'died', 'send', 'sends', 'sending', 'sent',
+                'build', 'builds', 'building', 'built', 'stay', 'stays', 'staying', 'stayed',
+                'fall', 'falls', 'falling', 'fell', 'cut', 'cuts', 'cutting', 'cut',
+                'reach', 'reaches', 'reaching', 'reached', 'kill', 'kills', 'killing', 'killed',
+                'remain', 'remains', 'remaining', 'remained', 'suggest', 'suggests', 'suggesting', 'suggested',
+                'raise', 'raises', 'raising', 'raised', 'pass', 'passes', 'passing', 'passed',
+                'sell', 'sells', 'selling', 'sold', 'require', 'requires', 'requiring', 'required',
+                'report', 'reports', 'reporting', 'reported', 'decide', 'decides', 'deciding', 'decided',
+                'pull', 'pulls', 'pulling', 'pulled', 'return', 'returns', 'returning', 'returned',
+                'reduce', 'reduces', 'reducing', 'reduced', 'prove', 'proves', 'proving', 'proved',
+                'join', 'joins', 'joining', 'joined', 'pick', 'picks', 'picking', 'picked',
+                'wear', 'wears', 'wearing', 'wore', 'break', 'breaks', 'breaking', 'broke',
+                'begin', 'begins', 'beginning', 'began', 'bring', 'brings', 'bringing', 'brought',
+                'catch', 'catches', 'catching', 'caught', 'choose', 'chooses', 'choosing', 'chose',
+                'draw', 'draws', 'drawing', 'drew', 'drive', 'drives', 'driving', 'drove',
+                'eat', 'eats', 'eating', 'ate', 'fall', 'falls', 'falling', 'fell',
+                'fight', 'fights', 'fighting', 'fought', 'find', 'finds', 'finding', 'found',
+                'fly', 'flies', 'flying', 'flew', 'forget', 'forgets', 'forgetting', 'forgot',
+                'forgive', 'forgives', 'forgiving', 'forgave', 'freeze', 'freezes', 'freezing', 'froze',
+                'grow', 'grows', 'growing', 'grew', 'hang', 'hangs', 'hanging', 'hung',
+                'hide', 'hides', 'hiding', 'hid', 'hit', 'hits', 'hitting', 'hit',
+                'hold', 'holds', 'holding', 'held', 'hurt', 'hurts', 'hurting', 'hurt',
+                'keep', 'keeps', 'keeping', 'kept', 'know', 'knows', 'knowing', 'knew',
+                'lay', 'lays', 'laying', 'laid', 'lead', 'leads', 'leading', 'led',
+                'leave', 'leaves', 'leaving', 'left', 'lend', 'lends', 'lending', 'lent',
+                'let', 'lets', 'letting', 'let', 'lie', 'lies', 'lying', 'lay',
+                'light', 'lights', 'lighting', 'lit', 'lose', 'loses', 'losing', 'lost',
+                'make', 'makes', 'making', 'made', 'mean', 'means', 'meaning', 'meant',
+                'meet', 'meets', 'meeting', 'met', 'pay', 'pays', 'paying', 'paid',
+                'put', 'puts', 'putting', 'put', 'read', 'reads', 'reading', 'read',
+                'ride', 'rides', 'riding', 'rode', 'ring', 'rings', 'ringing', 'rang',
+                'rise', 'rises', 'rising', 'rose', 'run', 'runs', 'running', 'ran',
+                'say', 'says', 'saying', 'said', 'see', 'sees', 'seeing', 'saw',
+                'seek', 'seeks', 'seeking', 'sought', 'sell', 'sells', 'selling', 'sold',
+                'send', 'sends', 'sending', 'sent', 'set', 'sets', 'setting', 'set',
+                'shake', 'shakes', 'shaking', 'shook', 'shine', 'shines', 'shining', 'shone',
+                'shoot', 'shoots', 'shooting', 'shot', 'show', 'shows', 'showing', 'showed',
+                'shut', 'shuts', 'shutting', 'shut', 'sing', 'sings', 'singing', 'sang',
+                'sit', 'sits', 'sitting', 'sat', 'sleep', 'sleeps', 'sleeping', 'slept',
+                'speak', 'speaks', 'speaking', 'spoke', 'spend', 'spends', 'spending', 'spent',
+                'stand', 'stands', 'standing', 'stood', 'steal', 'steals', 'stealing', 'stole',
+                'stick', 'sticks', 'sticking', 'stuck', 'strike', 'strikes', 'striking', 'struck',
+                'swear', 'swears', 'swearing', 'swore', 'sweep', 'sweeps', 'sweeping', 'swept',
+                'swim', 'swims', 'swimming', 'swam', 'swing', 'swings', 'swinging', 'swung',
+                'take', 'takes', 'taking', 'took', 'teach', 'teaches', 'teaching', 'taught',
+                'tear', 'tears', 'tearing', 'tore', 'tell', 'tells', 'telling', 'told',
+                'think', 'thinks', 'thinking', 'thought', 'throw', 'throws', 'throwing', 'threw',
+                'understand', 'understands', 'understanding', 'understood', 'wake', 'wakes', 'waking', 'woke',
+                'wear', 'wears', 'wearing', 'wore', 'win', 'wins', 'winning', 'won',
+                'write', 'writes', 'writing', 'wrote'
             }
 
             # Create a temporary directory for the word cloud
@@ -1056,9 +1120,9 @@ def create_interface(journal_viewer):
         def update_file_list(selected_path):
             """Update the file list based on the selected directory path."""
             if not selected_path:
-                return gr.update(choices=[])
+                return gr.update(choices=[]), gr.update(choices=[])
             files = journal_viewer._get_markdown_files(selected_path)
-            return gr.update(choices=files, value=files[0] if files else None)
+            return gr.update(choices=files, value=files[0] if files else None), gr.update(choices=files, value=None)
 
         def get_initial_directory_options():
             """Get initial directory options for the most recent date."""
@@ -1117,7 +1181,7 @@ def create_interface(journal_viewer):
         directory_radio.change(
             fn=update_file_list,
             inputs=[directory_radio],
-            outputs=[file_dropdown]
+            outputs=[file_dropdown, file_dropdown2]
         )
 
         # Connect file selection to editor
@@ -1125,6 +1189,27 @@ def create_interface(journal_viewer):
             fn=journal_viewer.load_file,
             inputs=[file_dropdown],
             outputs=[editor, preview]
+        )
+
+        # Connect second file selection to second editor
+        file_dropdown2.change(
+            fn=journal_viewer.load_file,
+            inputs=[file_dropdown2],
+            outputs=[editor2, preview2]
+        )
+
+        # Handle side-by-side view toggle
+        def toggle_side_by_side(show_side_by_side):
+            return [
+                gr.update(visible=show_side_by_side),  # file_dropdown2
+                gr.update(visible=show_side_by_side),  # editor2
+                gr.update(visible=show_side_by_side)   # preview2
+            ]
+
+        side_by_side.change(
+            fn=toggle_side_by_side,
+            inputs=[side_by_side],
+            outputs=[file_dropdown2, editor2, preview2]
         )
 
         # Connect the script description update

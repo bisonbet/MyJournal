@@ -371,6 +371,15 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
     # Always concatenate WAV files
     logger.info("\n=== Concatenating WAV Files ===")
     wav_paths = [file_info['path'] for file_info in files_to_process_info]
+    
+    # Log the order of files being concatenated
+    logger.info("Files will be concatenated in the following order:")
+    for i, file_info in enumerate(files_to_process_info, 1):
+        if 'datetime' in file_info:
+            logger.info(f"  {i}. {file_info['original_filename']} (Timestamp: {file_info['datetime']})")
+        else:
+            logger.info(f"  {i}. {file_info['original_filename']} (No timestamp)")
+    
     concatenated_output = os.path.join(directory_path, f"{os.path.basename(directory_path)}_concatenated.wav")
     logger.info(f"Creating concatenated file: {os.path.basename(concatenated_output)}")
     concatenated_files = concatenate_wav_files(wav_paths, concatenated_output, args.max_chunk_size, args.DEBUG)
@@ -429,11 +438,15 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
             logger.info(f"Input file: {os.path.basename(current_audio_path)}")
             command = [
                 "whisperx", current_audio_path,
-                "--model", "large-v3", "--diarize", "--language", "en",
+                "--model", "large-v3", "--language", "en",
                 "--highlight_words", "True", "--hf_token", hf_token,
                 "--output_dir", directory_path, 
                 "--vad_onset", str(args.vad_onset), "--vad_offset", str(args.vad_offset)
             ]
+            
+            # Add diarization flag if not disabled
+            if not args.no_diarize:
+                command.insert(4, "--diarize")
             
             # Set compute type based on device
             if args.device in ["mps", "cuda"]:
@@ -592,6 +605,11 @@ def concatenate_wav_files(wav_files, output_path, max_size_gb=3.5, debug_mode=Fa
 
     debug_print(f"Starting WAV concatenation. Max chunk size: {max_size_gb}GB", debug_mode)
     max_size_bytes = max_size_gb * 1024 * 1024 * 1024  # Convert GB to bytes
+    
+    # Log the order of files being processed
+    logger.info("\nProcessing files in the following order:")
+    for i, wav_file in enumerate(wav_files, 1):
+        logger.info(f"  {i}. {os.path.basename(wav_file)}")
     
     # Check if all files have the same format
     all_formats = []
@@ -841,6 +859,7 @@ if __name__ == "__main__":
                         help=f"Device to use for inference (e.g., cuda, cpu, mps). Defaults to {DEFAULT_DEVICE} on {platform.system()}.")
     whisperx_group.add_argument("--compute_type", type=str, default=DEFAULT_COMPUTE_TYPE, 
                         help=f"Compute type for WhisperX (e.g., auto, float16, float32, int8). Defaults to {DEFAULT_COMPUTE_TYPE} on {platform.system()}.")
+    whisperx_group.add_argument("--no-diarize", action="store_true", help="Disable speaker diarization in WhisperX.")
 
     # WAV concatenation arguments
     concat_group = parser.add_argument_group('WAV Concatenation Options')
