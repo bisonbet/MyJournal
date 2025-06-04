@@ -168,8 +168,7 @@ class JournalViewer:
                         # Skip files with "DEBUG" in the name
                         if "DEBUG" in file_path.name.upper():
                             continue
-                        rel_path = file_path.relative_to(self.root_dir)
-                        md_files.append(str(rel_path))
+                        md_files.append((file_path.name, str(file_path.relative_to(self.root_dir))))
             else:
                 # Search in specific directory
                 search_dir = self.root_dir / path
@@ -177,8 +176,7 @@ class JournalViewer:
                     # Skip files with "DEBUG" in the name
                     if "DEBUG" in file_path.name.upper():
                         continue
-                    rel_path = file_path.relative_to(self.root_dir)
-                    md_files.append(str(rel_path))
+                    md_files.append((file_path.name, str(file_path.relative_to(self.root_dir))))
         except Exception as e:
             pass
             
@@ -1053,10 +1051,13 @@ def create_interface(journal_viewer):
         # Add state for sidebar visibility
         sidebar_visible = gr.State(True)
         
+        # Add state for file path mapping
+        file_path_map = gr.State({})
+        
         # Main content area
         with gr.Row(elem_classes="main-content"):
             # Left column in a collapsible container
-            with gr.Column(scale=1, min_width=200) as left_column:
+            with gr.Column(scale=2, min_width=200, visible=True) as left_column:
                 # Ollama server settings
                 with gr.Group(elem_classes="ollama-settings"):
                     with gr.Row():
@@ -1215,7 +1216,7 @@ def create_interface(journal_viewer):
                     pdf_download = gr.File(label="Download PDF", visible=False)
             
             # Main content column
-            with gr.Column(scale=2) as main_column:
+            with gr.Column(scale=3) as main_column:
                 with gr.Tabs():
                     with gr.TabItem("Edit"):
                         with gr.Group():
@@ -1337,9 +1338,13 @@ def create_interface(journal_viewer):
         def update_file_list(selected_path):
             """Update the file list based on the selected directory path."""
             if not selected_path:
-                return gr.update(choices=[]), gr.update(choices=[])
+                return gr.update(choices=[]), gr.update(choices=[]), {}
             files = journal_viewer._get_markdown_files(selected_path)
-            return gr.update(choices=files, value=files[0] if files else None), gr.update(choices=files, value=None)
+            # Create choices list with just filenames for display
+            choices = [name for name, _ in files]
+            # Create value mapping for internal use
+            value_map = {name: path for name, path in files}
+            return gr.update(choices=choices, value=choices[0] if choices else None), gr.update(choices=choices, value=None), value_map
 
         def get_initial_directory_options():
             """Get initial directory options for the most recent date."""
@@ -1398,20 +1403,20 @@ def create_interface(journal_viewer):
         directory_radio.change(
             fn=update_file_list,
             inputs=[directory_radio],
-            outputs=[file_dropdown, file_dropdown2]
+            outputs=[file_dropdown, file_dropdown2, file_path_map]
         )
 
         # Connect file selection to editor
         file_dropdown.change(
-            fn=journal_viewer.load_file,
-            inputs=[file_dropdown],
+            fn=lambda filename, path_map: journal_viewer.load_file(path_map.get(filename, "")),
+            inputs=[file_dropdown, file_path_map],
             outputs=[editor, preview]
         )
 
         # Connect second file selection to second editor
         file_dropdown2.change(
-            fn=journal_viewer.load_file,
-            inputs=[file_dropdown2],
+            fn=lambda filename, path_map: journal_viewer.load_file(path_map.get(filename, "")),
+            inputs=[file_dropdown2, file_path_map],
             outputs=[editor2, preview2]
         )
 
@@ -1551,6 +1556,23 @@ def create_interface(journal_viewer):
             outputs=[server_status, model_checkboxes]
         )
         
+        # Add toggle sidebar functionality
+        def toggle_sidebar(visible):
+            return {
+                left_column: gr.update(visible=not visible),
+                main_column: gr.update(scale=3 if visible else 5)
+            }
+
+        toggle_button.click(
+            fn=toggle_sidebar,
+            inputs=[sidebar_visible],
+            outputs=[left_column, main_column]
+        ).then(
+            fn=lambda x: not x,
+            inputs=[sidebar_visible],
+            outputs=[sidebar_visible]
+        )
+
         return interface
 
 def main():
