@@ -15,6 +15,8 @@ import logging.handlers
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import re
+import requests
+import json
 
 # Configure logging
 def setup_logging():
@@ -56,6 +58,8 @@ class JournalViewer:
         self.root_dir = Path(root_dir)
         self.current_file = None
         self.journal_types = ["daily", "weekly", "monthly"]
+        self.ollama_url = "http://localhost:11434"
+        self.available_models = []
         self._ensure_directory_structure()
         logger.info(f"JournalViewer initialized with root directory: {self.root_dir}")
         
@@ -497,7 +501,50 @@ class JournalViewer:
                 if len(path_parts) >= 3:
                     month = path_parts[-1]  # Get the Month name
                     year = path_parts[-2]   # Get the Year
-                    return f"Create Summary of {month} {year}"
+                    try:
+                        # Create a date for the first day of the month
+                        date_obj = datetime.strptime(f"{year}-{month}-01", "%Y-%B-%d")
+                        
+                        # Validate year is between 2024 and 2099
+                        year = date_obj.year
+                        if year < 2024 or year > 2099:
+                            error_msg = f"Invalid year: {year}. Year must be between 2024 and 2099."
+                            logger.error(error_msg)
+                            return error_msg, None
+                        
+                        # Pass the first day of the month to summarize_month.py
+                        formatted_date = date_obj.strftime("%Y-%m-%d")
+                        
+                        # Run summarize_month.py with the correct base directory
+                        logger.info(f"Running summarize_month.py for date: {formatted_date}")
+                        run_script.current_process = subprocess.Popen(
+                            [sys.executable, "summarize_month.py", formatted_date, "--base_dir", "journals"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        
+                        # Read output in real-time
+                        while True:
+                            output = run_script.current_process.stdout.readline()
+                            if output == '' and run_script.current_process.poll() is not None:
+                                break
+                            if output:
+                                logger.info(output.strip())
+                        
+                        return_code = run_script.current_process.poll()
+                        if return_code == 0:
+                            return f"Successfully generated monthly summary for {month} {year}", None
+                        else:
+                            error_output = run_script.current_process.stderr.read()
+                            error_msg = f"Error generating monthly summary: {error_output}"
+                            logger.error(error_msg)
+                            return error_msg, None
+                            
+                    except ValueError as e:
+                        error_msg = f"Error parsing date: {e}"
+                        logger.error(error_msg)
+                        return error_msg, None
                 return "Invalid path format for monthly summary"
 
             elif script_name == "Export to PDF":
@@ -536,13 +583,77 @@ class JournalViewer:
                         return check_date
         return None
 
-def run_script(script_name, current_path, file1, file2=None, journal_viewer=None):
+    def check_ollama_status(self, url=None):
+        """Check if Ollama server is running and accessible."""
+        if url is None:
+            url = self.ollama_url
+            
+        try:
+            response = requests.get(f"{url.rstrip('/')}/api/tags", timeout=5)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error connecting to Ollama server at {url}: {e}")
+            return False
+            
+    def get_available_models(self, url=None):
+        """Get list of available models from Ollama server."""
+        if url is None:
+            url = self.ollama_url
+            
+        try:
+            response = requests.get(f"{url.rstrip('/')}/api/tags", timeout=5)
+            response.raise_for_status()
+            models_data = response.json()
+            
+            # Filter out embedding models
+            available_models = []
+            for model in models_data.get('models', []):
+                model_name = model.get('name', '')
+                if not any(term in model_name.lower() for term in ['embed', 'embedding']):
+                    available_models.append(model_name)
+                    
+            self.available_models = sorted(available_models)
+            return self.available_models
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error getting models from Ollama server at {url}: {e}")
+            return []
+            
+    def update_ollama_url(self, new_url):
+        """Update the Ollama server URL and refresh available models."""
+        if not new_url:
+            return False, "URL cannot be empty"
+            
+        # Validate URL format
+        if not new_url.startswith(('http://', 'https://')):
+            new_url = f"http://{new_url}"
+            
+        # Test connection
+        if not self.check_ollama_status(new_url):
+            return False, f"Could not connect to Ollama server at {new_url}"
+            
+        self.ollama_url = new_url
+        models = self.get_available_models()
+        if not models:
+            return False, "Connected to server but no models found"
+            
+        return True, f"Successfully connected to {new_url} and found {len(models)} models"
+
+def run_script(script_name, current_path, file1, file2=None, journal_viewer=None, selected_models=None):
     if not script_name:
         return "No script selected", None
         
     # Check if a script is already running
     if run_script.current_process is not None:
         return "A script is already running. Please wait for it to complete or cancel it.", None
+        
+    # Check if Ollama server is available
+    if not journal_viewer.check_ollama_status():
+        return "Ollama server is not available. Please check the server URL and try again.", None
+        
+    # Check if at least one model is selected
+    if not selected_models:
+        return "Please select at least one model from the list.", None
         
     try:
         if script_name == "Export to PDF":
@@ -575,9 +686,11 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                 full_path = str(journal_viewer.root_dir / current_path)
                 logger.info(f"Running diarize-audio.py with path: {full_path}")
                 
-                # Run diarize-audio.py with the full path
+                # Run diarize-audio.py with the full path and all selected models
                 run_script.current_process = subprocess.Popen(
-                    [sys.executable, "diarize-audio.py", full_path],
+                    [sys.executable, "diarize-audio.py", full_path, 
+                     "--ollama_url", journal_viewer.ollama_url, 
+                     "--ollama_models", ",".join(selected_models)],  # Pass all selected models
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True
@@ -638,10 +751,13 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                             # Pass the Saturday date directly to summarize_week.py
                             formatted_date = date_obj.strftime("%Y-%m-%d")
                             
-                            # Run summarize_week.py with the correct base directory
+                            # Run summarize_week.py with the correct base directory and all selected models
                             logger.info(f"Running summarize_week.py for date: {formatted_date}")
                             run_script.current_process = subprocess.Popen(
-                                [sys.executable, "summarize_week.py", formatted_date, "--base_dir", "journals"],
+                                [sys.executable, "summarize_week.py", formatted_date, 
+                                 "--base_dir", "journals",
+                                 "--ollama_url", journal_viewer.ollama_url,
+                                 "--ollama_models", ",".join(selected_models)],  # Pass all selected models
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 text=True
@@ -655,35 +771,26 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
                                 if output:
                                     logger.info(output.strip())
                             
-                            # Get any remaining stderr
-                            stderr_output = run_script.current_process.stderr.read()
-                            if stderr_output:
-                                logger.warning(stderr_output.strip())
-                            
                             return_code = run_script.current_process.poll()
                             run_script.current_process = None  # Clear the process
                             
                             if return_code == 0:
                                 return "Weekly summary generated successfully", None
                             else:
-                                return f"Error generating weekly summary (return code: {return_code})", None
-                            
+                                error_output = run_script.current_process.stderr.read()
+                                error_msg = f"Error generating weekly summary: {error_output}"
+                                logger.error(error_msg)
+                                return error_msg, None
+                                
                         except ValueError as e:
-                            error_msg = f"Invalid date format in path: {e}"
+                            error_msg = f"Error parsing date: {e}"
                             logger.error(error_msg)
                             return error_msg, None
-                    else:
-                        error_msg = "Invalid week folder format"
-                        logger.error(error_msg)
-                        return error_msg, None
-                else:
-                    error_msg = "Invalid path format for weekly summary"
-                    logger.error(error_msg)
-                    return error_msg, None
-                    
+                return "Invalid path format for weekly summary", None
+                
             except Exception as e:
                 run_script.current_process = None  # Clear the process on error
-                error_msg = f"Unexpected error: {str(e)}\nType: {type(e)}"
+                error_msg = f"Error running weekly summary script: {str(e)}"
                 logger.error(error_msg, exc_info=True)
                 return error_msg, None
 
@@ -691,8 +798,69 @@ def run_script(script_name, current_path, file1, file2=None, journal_viewer=None
             if not current_path:
                 logger.warning("No directory selected for monthly summary generation")
                 return "No directory selected", None
-            logger.info("Monthly summary generation requested (not implemented)")
-            return "Monthly summary generation will be implemented", None
+                
+            try:
+                # Extract month from path (format: monthly/YYYY/Month)
+                path_parts = current_path.split('/')
+                if len(path_parts) >= 3:
+                    month = path_parts[-1]  # Get the Month name
+                    year = path_parts[-2]   # Get the Year
+                    try:
+                        # Create a date for the first day of the month
+                        date_obj = datetime.strptime(f"{year}-{month}-01", "%Y-%B-%d")
+                        
+                        # Validate year is between 2024 and 2099
+                        year = date_obj.year
+                        if year < 2024 or year > 2099:
+                            error_msg = f"Invalid year: {year}. Year must be between 2024 and 2099."
+                            logger.error(error_msg)
+                            return error_msg, None
+                        
+                        # Pass the first day of the month to summarize_month.py
+                        formatted_date = date_obj.strftime("%Y-%m-%d")
+                        
+                        # Run summarize_month.py with the correct base directory and all selected models
+                        logger.info(f"Running summarize_month.py for date: {formatted_date}")
+                        run_script.current_process = subprocess.Popen(
+                            [sys.executable, "summarize_month.py", formatted_date, 
+                             "--base_dir", "journals",
+                             "--ollama_url", journal_viewer.ollama_url,
+                             "--ollama_models", ",".join(selected_models)],  # Pass all selected models
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        
+                        # Read output in real-time
+                        while True:
+                            output = run_script.current_process.stdout.readline()
+                            if output == '' and run_script.current_process.poll() is not None:
+                                break
+                            if output:
+                                logger.info(output.strip())
+                        
+                        return_code = run_script.current_process.poll()
+                        run_script.current_process = None  # Clear the process
+                        
+                        if return_code == 0:
+                            return f"Successfully generated monthly summary for {month} {year}", None
+                        else:
+                            error_output = run_script.current_process.stderr.read()
+                            error_msg = f"Error generating monthly summary: {error_output}"
+                            logger.error(error_msg)
+                            return error_msg, None
+                            
+                    except ValueError as e:
+                        error_msg = f"Error parsing date: {e}"
+                        logger.error(error_msg)
+                        return error_msg, None
+                return "Invalid path format for monthly summary", None
+                
+            except Exception as e:
+                run_script.current_process = None  # Clear the process on error
+                error_msg = f"Error running monthly summary script: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                return error_msg, None
                 
         elif script_name == "Word Cloud Analysis":
             if not current_path:
@@ -842,6 +1010,34 @@ def create_interface(journal_viewer):
             background-color: #6c757d;
             cursor: not-allowed;
         }
+        .model-list {
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background: var(--background-fill-secondary);
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+        .model-list .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .model-list .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .model-list .checkbox-group label:hover {
+            background: var(--background-fill-primary);
+        }
+        .model-list .checkbox-group input[type="checkbox"] {
+            margin: 0;
+        }
     """) as interface:
         # Top bar with title and toggle
         with gr.Row(elem_classes="top-bar"):
@@ -861,6 +1057,27 @@ def create_interface(journal_viewer):
         with gr.Row(elem_classes="main-content"):
             # Left column in a collapsible container
             with gr.Column(scale=1, min_width=200) as left_column:
+                # Ollama server settings
+                with gr.Group(elem_classes="ollama-settings"):
+                    with gr.Row():
+                        with gr.Column(scale=4):
+                            ollama_url = gr.Textbox(
+                                label="Ollama Server URL",
+                                value=journal_viewer.ollama_url,
+                                interactive=True
+                            )
+                        with gr.Column(scale=1):
+                            server_status = gr.HTML(
+                                value="<div style='display: flex; align-items: center; height: 100%;'><span style='color: #666;'>Checking...</span></div>"
+                            )
+                    with gr.Group(elem_classes="model-list"):
+                        model_checkboxes = gr.CheckboxGroup(
+                            label="Select Models",
+                            choices=[],
+                            interactive=True
+                        )
+                    refresh_button = gr.Button("Refresh Models")
+                
                 # Calendar picker
                 with gr.Group(elem_classes="calendar-container"):
                     with gr.Row():
@@ -1230,8 +1447,10 @@ def create_interface(journal_viewer):
 
         # Connect the script runner
         run_script_button.click(
-            fn=lambda *args: run_script(*args, journal_viewer=journal_viewer),
-            inputs=[script_dropdown, directory_radio, file_dropdown, file_dropdown2],
+            fn=lambda script_name, current_path, file1, file2, selected_models: run_script(
+                script_name, current_path, file1, file2, journal_viewer=journal_viewer, selected_models=selected_models
+            ),
+            inputs=[script_dropdown, directory_radio, file_dropdown, file_dropdown2, model_checkboxes],
             outputs=[script_status, pdf_download]
         ).then(
             fn=lambda status: gr.update(visible=run_script.current_process is not None),
@@ -1287,6 +1506,49 @@ def create_interface(journal_viewer):
             fn=cleanup_temp_dir,
             inputs=[pdf_download],
             outputs=[pdf_download]
+        )
+        
+        # Ollama settings events
+        def update_ollama_settings(url):
+            success, message = journal_viewer.update_ollama_url(url)
+            if success:
+                status_html = "<div style='display: flex; align-items: center; height: 100%;'><span style='color: #4CAF50;'>✓ Connected</span></div>"
+                return gr.update(value=status_html), gr.update(choices=journal_viewer.available_models)
+            status_html = f"<div style='display: flex; align-items: center; height: 100%;'><span style='color: #f44336;'>✗ {message}</span></div>"
+            return gr.update(value=status_html), gr.update(choices=[])
+            
+        def refresh_models():
+            models = journal_viewer.get_available_models()
+            if models:
+                return gr.update(choices=models)
+            return gr.update(choices=[])
+            
+        # Connect Ollama settings events
+        ollama_url.change(
+            fn=update_ollama_settings,
+            inputs=[ollama_url],
+            outputs=[server_status, model_checkboxes]
+        )
+        
+        refresh_button.click(
+            fn=refresh_models,
+            inputs=[],
+            outputs=[model_checkboxes]
+        )
+        
+        # Initial model refresh and status check
+        def initial_check():
+            success, message = journal_viewer.update_ollama_url(journal_viewer.ollama_url)
+            if success:
+                status_html = "<div style='display: flex; align-items: center; height: 100%;'><span style='color: #4CAF50;'>✓ Connected</span></div>"
+            else:
+                status_html = f"<div style='display: flex; align-items: center; height: 100%;'><span style='color: #f44336;'>✗ {message}</span></div>"
+            return gr.update(value=status_html), gr.update(choices=journal_viewer.available_models)
+        
+        interface.load(
+            fn=initial_check,
+            inputs=[],
+            outputs=[server_status, model_checkboxes]
         )
         
         return interface

@@ -345,6 +345,10 @@ def main():
         '--production', action='store_true', default=False,
         help="Run in production mode (deletes WAVs after MP3 conversion, no --DEBUG to child scripts). Default is DEBUG mode."
     )
+    parser.add_argument(
+        '--ollama_models', type=str,
+        help="Comma-separated list of Ollama models to use for summarization."
+    )
 
     args, remaining_args = parser.parse_known_args()
     is_orchestrator_debug_mode = not args.production
@@ -381,13 +385,20 @@ def main():
     logger.info(f"WAV Directory (Absolute): {abs_wav_directory}")
     hf_token_display = f"'{'*' * (len(args.hf_token) - 4) + args.hf_token[-4:]}'" if args.hf_token and len(args.hf_token) > 4 else "'Provided'"
     logger.info(f"Hugging Face Token: {hf_token_display}")
+    if args.ollama_models:
+        logger.info(f"Ollama Models: {args.ollama_models}")
 
     concatenated_transcript_file = run_script1(abs_wav_directory, args.hf_token, is_orchestrator_debug_mode)
     if not concatenated_transcript_file:
         logger.error(f"\nOrchestration failed: {SCRIPT1_NAME} did not produce the expected output file correctly.")
         sys.exit(1)
 
-    script2_success = run_script2(concatenated_transcript_file, is_orchestrator_debug_mode, remaining_args)
+    # Add ollama_models to script2_extra_args if provided
+    script2_extra_args = list(remaining_args)
+    if args.ollama_models:
+        script2_extra_args.extend(['--ollama_models', args.ollama_models])
+
+    script2_success = run_script2(concatenated_transcript_file, is_orchestrator_debug_mode, script2_extra_args)
     if not script2_success:
         logger.error(f"\nOrchestration partially failed: {SCRIPT2_NAME} reported errors.")
         logger.info("Proceeding with MP3 conversion despite summarization issues...")

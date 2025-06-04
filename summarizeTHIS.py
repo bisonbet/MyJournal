@@ -454,6 +454,7 @@ def main():
     parser.add_argument("file_path", help="Path to the long text file.")
     parser.add_argument("--ollama_url", default=DEFAULT_OLLAMA_URL, help=f"URL of the Ollama server (default: {DEFAULT_OLLAMA_URL}).")
     parser.add_argument("--ollama_model", help=f"Optional: Specify a single model to use. If not provided, will run all models in MODELS_TO_RUN_LIST: {', '.join(MODELS_TO_RUN_LIST)}")
+    parser.add_argument("--ollama_models", help="Comma-separated list of models to use. If provided, overrides --ollama_model and MODELS_TO_RUN_LIST.")
     
     parser.add_argument("--initial_pass_ollama_num_ctx", type=int, default=DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX, help=f"Context window for initial chunk summarization (default: {DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX}).")
     parser.add_argument("--initial_pass_max_new_tokens", type=int, default=DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS, help=f"Max new tokens for initial chunk summaries (default: {DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS}).")
@@ -467,7 +468,6 @@ def main():
     parser.add_argument("--overlap_tokens", type=int, default=DEFAULT_TOKEN_OVERLAP, help=f"Token overlap between chunks (default: {DEFAULT_TOKEN_OVERLAP}).")
     # New DEBUG flag
     parser.add_argument("--DEBUG", action='store_true', help="Enable saving of intermediate debug files.")
-
 
     args = parser.parse_args()
 
@@ -498,7 +498,13 @@ def main():
         return
 
     # Determine which models to run
-    models_to_run = [args.ollama_model] if args.ollama_model else MODELS_TO_RUN_LIST
+    if args.ollama_models:
+        # Split the comma-separated list and strip whitespace
+        models_to_run = [model.strip() for model in args.ollama_models.split(',')]
+    elif args.ollama_model:
+        models_to_run = [args.ollama_model]
+    else:
+        models_to_run = MODELS_TO_RUN_LIST
 
     for model_name_for_iteration in models_to_run:
         if args.DEBUG:
