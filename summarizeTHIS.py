@@ -35,7 +35,7 @@ DEFAULT_FINAL_PASS_MAX_NEW_TOKENS = 5000    # Final summary output
 # Other chunking parameters
 DEFAULT_TARGET_CHUNK_TOKENS_RATIO = 0.6 # Ratio of num_ctx to use for text content in a chunk
 DEFAULT_TOKEN_OVERLAP = 200
-TIKTOKEN_ENCODING_FOR_CHUNKNG = "o200k_base"
+TIKTOKEN_ENCODING_FOR_CHUNKNG = "cl100k_base"
 BUFFER_FOR_PROMPT_AND_GENERATION_MARGIN = 300 # General buffer for prompt template and generation margin
 
 
@@ -46,12 +46,7 @@ def get_tokenizer_for_counting():
     except Exception as e:
         print(f"Could not load tiktoken encoding '{TIKTOKEN_ENCODING_FOR_CHUNKNG}'. Error: {e}")
         print("Please ensure tiktoken is installed correctly.")
-        print("Falling back to 'cl100k_base' if 'o200k_base' is unavailable for some reason.")
-        try:
-            return tiktoken.get_encoding("cl100k_base")
-        except Exception as e_fallback:
-            print(f"Could not load fallback tiktoken encoding 'cl100k_base'. Error: {e_fallback}")
-            raise
+        raise
 
 def check_ollama_status(ollama_url, debug_mode=False):
     """Checks if the Ollama server is responsive."""
