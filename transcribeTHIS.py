@@ -348,21 +348,33 @@ def process_wav_files_in_directory(directory_path, hf_token, args):
                     timestamp_str = match.group(1)
                     dt_obj = datetime.strptime(timestamp_str, args.filename_timestamp_format)
                     sortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
-                    logger.info(f"  ✓ Sorted: {filename} -> {dt_obj}")
+                    logger.info(f"  ✓ Sorted by filename timestamp: {filename} -> {dt_obj}")
                 else:
-                    logger.warning(f"  ⚠ No timestamp found in: {filename}")
-                    unsortable_files.append({'path': wav_path, 'original_filename': filename})
+                    # Fall back to filesystem timestamp
+                    file_stat = os.stat(wav_path)
+                    dt_obj = datetime.fromtimestamp(file_stat.st_mtime)
+                    unsortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
+                    logger.info(f"  ✓ Sorted by filesystem timestamp: {filename} -> {dt_obj}")
             except ValueError as ve:
-                logger.warning(f"  ⚠ Could not parse timestamp in: {filename} - {ve}")
-                unsortable_files.append({'path': wav_path, 'original_filename': filename})
+                # Fall back to filesystem timestamp
+                file_stat = os.stat(wav_path)
+                dt_obj = datetime.fromtimestamp(file_stat.st_mtime)
+                unsortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
+                logger.info(f"  ✓ Sorted by filesystem timestamp: {filename} -> {dt_obj}")
             except Exception as e_parse:
-                logger.warning(f"  ⚠ Error processing: {filename} - {e_parse}")
-                unsortable_files.append({'path': wav_path, 'original_filename': filename})
+                # Fall back to filesystem timestamp
+                file_stat = os.stat(wav_path)
+                dt_obj = datetime.fromtimestamp(file_stat.st_mtime)
+                unsortable_files.append({'datetime': dt_obj, 'path': wav_path, 'original_filename': filename})
+                logger.info(f"  ✓ Sorted by filesystem timestamp: {filename} -> {dt_obj}")
         
-        sortable_files.sort(key=lambda x: x['datetime'])
-        files_to_process_info = sortable_files + unsortable_files
-        logger.info(f"\nSorted {len(sortable_files)} files by timestamp")
-        logger.info(f"Found {len(unsortable_files)} files without valid timestamps")
+        # Combine and sort all files by their datetime
+        all_files = sortable_files + unsortable_files
+        all_files.sort(key=lambda x: x['datetime'])
+        files_to_process_info = all_files
+        
+        logger.info(f"\nSorted {len(sortable_files)} files by filename timestamp")
+        logger.info(f"Sorted {len(unsortable_files)} files by filesystem timestamp")
     else:
         logger.info("\n=== Processing Files in Default Order ===")
         for wav_path in initial_wav_files:
@@ -839,9 +851,9 @@ if __name__ == "__main__":
 
     # Filename timestamp parsing arguments
     timestamp_group = parser.add_argument_group('Timestamp Sorting Options')
-    timestamp_group.add_argument("--filename-timestamp-format", type=str, default="%m_%d_%y-%H_%M_%S",
-                        help="datetime.strptime format for timestamps in filenames (e.g., '%%m_%%d_%%y-%%H_%%M_%%S').")
-    timestamp_group.add_argument("--filename-timestamp-regex", type=str, default=r"(\d{2}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2})",
+    timestamp_group.add_argument("--filename-timestamp-format", type=str, default="%Y%m%d-%H%M%S",
+                        help="datetime.strptime format for timestamps in filenames (e.g., '%%Y%%m%%d-%%H%%M%%S').")
+    timestamp_group.add_argument("--filename-timestamp-regex", type=str, default=r"V(\d{8}-\d{6})",
                         help="Regex to extract timestamp from filename. Must have one capture group for the timestamp string.")
 
     # Pre-processing arguments
