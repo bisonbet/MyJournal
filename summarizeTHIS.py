@@ -23,18 +23,18 @@ MODELS_TO_RUN_LIST = [
 ]
 
 # Context window sizes for different summarization passes
-DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX = 4096
-DEFAULT_INTERMEDIATE_PASS_OLLAMA_NUM_CTX = 8192
-DEFAULT_FINAL_PASS_OLLAMA_NUM_CTX = 16000 # As per user request for final summary
+DEFAULT_INITIAL_PASS_OLLAMA_NUM_CTX = 8192
+DEFAULT_INTERMEDIATE_PASS_OLLAMA_NUM_CTX = 12288
+DEFAULT_FINAL_PASS_OLLAMA_NUM_CTX = 16384 # As per user request for final summary
 
 # Max new tokens to generate for each pass's output
-DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS = 750   # Output of initial pass, input to intermediate
-DEFAULT_INTERMEDIATE_PASS_MAX_NEW_TOKENS = 2500 # Output of intermediate pass, input to final
-DEFAULT_FINAL_PASS_MAX_NEW_TOKENS = 5000    # Final summary output
+DEFAULT_INITIAL_PASS_MAX_NEW_TOKENS = 1000   # Output of initial pass, input to intermediate
+DEFAULT_INTERMEDIATE_PASS_MAX_NEW_TOKENS = 3000 # Output of intermediate pass, input to final
+DEFAULT_FINAL_PASS_MAX_NEW_TOKENS = 6000    # Final summary output
 
 # Other chunking parameters
-DEFAULT_TARGET_CHUNK_TOKENS_RATIO = 0.6 # Ratio of num_ctx to use for text content in a chunk
-DEFAULT_TOKEN_OVERLAP = 200
+DEFAULT_TARGET_CHUNK_TOKENS_RATIO = 0.7 # Ratio of num_ctx to use for text content in a chunk
+DEFAULT_TOKEN_OVERLAP = 100
 TIKTOKEN_ENCODING_FOR_CHUNKNG = "cl100k_base"
 BUFFER_FOR_PROMPT_AND_GENERATION_MARGIN = 300 # General buffer for prompt template and generation margin
 
